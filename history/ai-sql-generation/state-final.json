@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.1",
+  "feature_slug": "ai-sql-generation",
+  "final_phase": "reviewing-complete",
+  "final_gates": {
+    "context": true,
+    "work_shape": true,
+    "phase_plan": true,
+    "execution": true,
+    "review": true
+  },
+  "review_mode": "reviewing-lite",
+  "review_mode_note": "Repo has no .git and no beads-cli/.beads/; full reviewing skill degraded to inline review (see history/ai-sql-generation/review.md).",
+  "uat_result": "all-pass (user attest)",
+  "findings_count": {
+    "p1": 0,
+    "p2": 2,
+    "p3": 4
+  },
+  "quality_gates": {
+    "typecheck": "pass",
+    "build": "pass",
+    "lint": "not-runnable (eslint not installed; pre-existing repo gap, tracked as F2)"
+  },
+  "artifacts_verified": 9,
+  "closed_at": "2026-07-01T00:00:00.000Z",
+  "next_feature": "linked-query"
+}

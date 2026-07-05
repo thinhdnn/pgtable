@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm info *)",
+      "Bash(npm install *)",
+      "Bash(pip3.14 install *)",
+      "Bash(npx electron-rebuild *)",
+      "Bash(scripts/bin/harness-cli story *)",
+      "Bash(npm run *)",
+      "WebFetch(domain:duckdb.org)"
+    ]
+  }
+}

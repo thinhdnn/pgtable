@@ -1,0 +1,366 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-07-01T10:15:02.565Z",
+  "reservations": [
+    {
+      "id": "resv-mr1sm0ar-ro76c5",
+      "agent": "parent-solo",
+      "bead_id": "S-B1-T1T2",
+      "paths": [
+        "src/main/linked-query/executor.ts"
+      ],
+      "created_at": "2026-07-01T08:07:35.427Z",
+      "updated_at": "2026-07-01T08:09:45.438Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:07:35.427Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:09:45.438Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sm0c0-fn54ba",
+      "agent": "parent-solo",
+      "bead_id": "S-B1-T3",
+      "paths": [
+        "src/main/linked-query/executor.test.ts"
+      ],
+      "created_at": "2026-07-01T08:07:35.472Z",
+      "updated_at": "2026-07-01T08:09:45.438Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:07:35.472Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:09:45.438Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sm0d8-sxr1i8",
+      "agent": "parent-solo",
+      "bead_id": "S-B1-T4",
+      "paths": [
+        "vitest.config.ts"
+      ],
+      "created_at": "2026-07-01T08:07:35.516Z",
+      "updated_at": "2026-07-01T08:09:45.438Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:07:35.516Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:09:45.438Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sm0ef-y4suez",
+      "agent": "parent-solo",
+      "bead_id": "S-B1-T4",
+      "paths": [
+        "package.json"
+      ],
+      "created_at": "2026-07-01T08:07:35.559Z",
+      "updated_at": "2026-07-01T08:09:45.438Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:07:35.559Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:09:45.438Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sqzu2-akmwzb",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "src/shared/ipc-channels.ts"
+      ],
+      "created_at": "2026-07-01T08:11:28.106Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.106Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sqzvc-ykwxvh",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "src/shared/types.ts"
+      ],
+      "created_at": "2026-07-01T08:11:28.152Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.152Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sqzwi-os0c2i",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "src/main/linked-query/executor.ts"
+      ],
+      "created_at": "2026-07-01T08:11:28.194Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.194Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sqzxn-gv5twl",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "src/main/linked-query/executor.test.ts"
+      ],
+      "created_at": "2026-07-01T08:11:28.235Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.235Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sqzys-eytt8i",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "src/main/ipc/linked-query-handlers.ts"
+      ],
+      "created_at": "2026-07-01T08:11:28.276Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.276Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sqzzy-bzj3go",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "src/main/index.ts"
+      ],
+      "created_at": "2026-07-01T08:11:28.318Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.318Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sr013-rzxufu",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "src/renderer/src/store/active-connection.tsx"
+      ],
+      "created_at": "2026-07-01T08:11:28.359Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.359Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sr029-b38kfw",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "src/renderer/src/components/linked-query/LinkedQueryTab.tsx"
+      ],
+      "created_at": "2026-07-01T08:11:28.401Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.401Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sr03e-rkraus",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "src/renderer/src/components/TitleBar.tsx"
+      ],
+      "created_at": "2026-07-01T08:11:28.442Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.442Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sr04l-0c4l7a",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "src/renderer/src/App.tsx"
+      ],
+      "created_at": "2026-07-01T08:11:28.485Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.485Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1sr05r-8j11x4",
+      "agent": "parent-solo",
+      "bead_id": "linked-batch",
+      "paths": [
+        "docs/product/linked-query.md"
+      ],
+      "created_at": "2026-07-01T08:11:28.527Z",
+      "updated_at": "2026-07-01T08:15:37.045Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T09:11:28.527Z",
+      "status": "released",
+      "released_at": "2026-07-01T08:15:37.045Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1v4m31-oabgqj",
+      "agent": "parent-solo",
+      "bead_id": "sql-hints",
+      "paths": [
+        "src/renderer/src/utils/sql-hints.ts"
+      ],
+      "created_at": "2026-07-01T09:18:02.701Z",
+      "updated_at": "2026-07-01T09:19:10.981Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T10:18:02.701Z",
+      "status": "released",
+      "released_at": "2026-07-01T09:19:10.981Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1v4m48-hbk8vt",
+      "agent": "parent-solo",
+      "bead_id": "sql-hints",
+      "paths": [
+        "src/renderer/src/components/linked-query/LinkedQueryTab.tsx"
+      ],
+      "created_at": "2026-07-01T09:18:02.744Z",
+      "updated_at": "2026-07-01T09:19:10.981Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T10:18:02.744Z",
+      "status": "released",
+      "released_at": "2026-07-01T09:19:10.981Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1v4m5c-wr93z0",
+      "agent": "parent-solo",
+      "bead_id": "sql-hints",
+      "paths": [
+        "src/renderer/src/components/query/QueryEditor.tsx"
+      ],
+      "created_at": "2026-07-01T09:18:02.784Z",
+      "updated_at": "2026-07-01T09:19:10.981Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T10:18:02.784Z",
+      "status": "released",
+      "released_at": "2026-07-01T09:19:10.981Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1vtykz-dbj6wm",
+      "agent": "parent-solo",
+      "bead_id": "table-picker",
+      "paths": [
+        "src/renderer/src/components/linked-query/LinkedQueryTab.tsx"
+      ],
+      "created_at": "2026-07-01T09:37:45.299Z",
+      "updated_at": "2026-07-01T09:39:18.737Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T10:37:45.299Z",
+      "status": "released",
+      "released_at": "2026-07-01T09:39:18.737Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1w0az0-3a1f0u",
+      "agent": "parent-solo",
+      "bead_id": "side-grid",
+      "paths": [
+        "src/renderer/src/components/linked-query/LinkedQueryTab.tsx"
+      ],
+      "created_at": "2026-07-01T09:42:41.292Z",
+      "updated_at": "2026-07-01T09:43:40.497Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T10:42:41.292Z",
+      "status": "released",
+      "released_at": "2026-07-01T09:43:40.497Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1wij65-7k5hi5",
+      "agent": "parent-solo",
+      "bead_id": "grid-fix",
+      "paths": [
+        "src/renderer/src/components/linked-query/LinkedQueryTab.tsx"
+      ],
+      "created_at": "2026-07-01T09:56:51.725Z",
+      "updated_at": "2026-07-01T09:59:28.696Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T10:56:51.725Z",
+      "status": "released",
+      "released_at": "2026-07-01T09:59:28.696Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1wuxwb-69noha",
+      "agent": "parent-solo",
+      "bead_id": "lq-right-panel",
+      "paths": [
+        "src/renderer/src/components/linked-query/LinkedQueryTab.tsx"
+      ],
+      "created_at": "2026-07-01T10:06:30.683Z",
+      "updated_at": "2026-07-01T10:07:09.377Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T11:06:30.683Z",
+      "status": "released",
+      "released_at": "2026-07-01T10:07:09.377Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1x08nf-lymach",
+      "agent": "parent-solo",
+      "bead_id": "lq-flex",
+      "paths": [
+        "src/renderer/src/components/linked-query/LinkedQueryTab.tsx"
+      ],
+      "created_at": "2026-07-01T10:10:37.899Z",
+      "updated_at": "2026-07-01T10:11:14.133Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T11:10:37.899Z",
+      "status": "released",
+      "released_at": "2026-07-01T10:11:14.133Z",
+      "note": ""
+    },
+    {
+      "id": "resv-mr1x56vj-xd7zac",
+      "agent": "parent-solo",
+      "bead_id": "lq-lock-flex",
+      "paths": [
+        "src/renderer/src/components/linked-query/LinkedQueryTab.tsx"
+      ],
+      "created_at": "2026-07-01T10:14:28.879Z",
+      "updated_at": "2026-07-01T10:15:02.565Z",
+      "ttl_seconds": 3600,
+      "expires_at": "2026-07-01T11:14:28.879Z",
+      "status": "released",
+      "released_at": "2026-07-01T10:15:02.565Z",
+      "note": ""
+    }
+  ]
+}

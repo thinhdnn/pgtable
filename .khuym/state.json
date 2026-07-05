@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.1",
+  "feature_slug": "save-federated-query",
+  "mode": "standard_feature",
+  "active_skill": "swarming",
+  "phase": "execution-complete",
+  "phase_number": 4,
+  "epic_id": "",
+  "current_work": "S-1",
+  "approved_gates": {
+    "context": true,
+    "work_shape": true,
+    "phase_plan": true,
+    "execution": true,
+    "review": false
+  },
+  "active_beads": [],
+  "active_workers": [],
+  "blockers": [],
+  "summary": "S-1 executed inline (degraded-mode swarming: no .beads/, 7 tightly-coupled files, no fan-out benefit). T-1..T-6 shipped: SavedFederatedQuery/Input + SavedFederatedAttachment types (alias omitted, derived); FEDERATED_SCRIPT_LIST/SAVE/DELETE channels; src/main/db/federated-script-store.ts (lazy electron-store 'pgtable-federated-scripts' + pure upsertFederatedQueries, D4 unique-name/overwrite); federated-script-store.test.ts (6 tests); src/main/ipc/federated-script-handlers.ts (NAME_EXISTS on collision); registered in index.ts; FederatedQueryTab.tsx Save button + Save modal (overwrite/rename) + Saved drawer (search list Open/Delete) + best-effort Open hydration with missing/disconnected row flags (D3) + dirty-confirm on Open (D5). Proof bar GREEN: typecheck exit 0, test 67/67 (was 61), build exit 0. Runtime UAT (launch app, Save/Open/Delete, restart-persist, deleted-connection missing flag) NOT yet done — belongs to reviewing.",
+  "next_action": "Invoke khuym:reviewing for 4-role review + runtime UAT of save-federated-query S-1.",
+  "focus": "src/renderer/src/components/federated/FederatedQueryTab.tsx",
+  "deferred_beads": [],
+  "parked_features": [
+    {
+      "feature_slug": "save-sql-script",
+      "phase": "execution-complete",
+      "active_skill": "reviewing",
+      "next_action": "Invoke khuym:reviewing for 4-role review + runtime UAT of save-sql-script S-1 (launch app, Save/Open/Delete, restart-persist). Review gate not approved.",
+      "focus": "src/renderer/src/components/query/QueryEditor.tsx",
+      "parked_at": "2026-07-05",
+      "reason": "User chose to start save-federated-query before closing save-sql-script's review/UAT."
+    }
+  ],
+  "last_compounding_run": {
+    "feature": "ai-sql-generation",
+    "date": "2026-07-01",
+    "learnings_file": "history/learnings/20260701-ai-sql-generation.md",
+    "critical_promotions": 3
+  },
+  "last_updated": "2026-07-05T00:00:00.000Z",
+  "updated_at": "2026-07-05T00:00:00.000Z",
+  "notes": [
+    "linked-query: shipped full epic; user passed the review gate manually (2026-07-02).",
+    "save-sql-script: execution complete, PARKED at reviewing (see parked_features) — runtime UAT still owed.",
+    "save-federated-query: exploring complete, CONTEXT.md locked D1-D5."
+  ]
+}

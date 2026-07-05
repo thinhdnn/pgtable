@@ -1,0 +1,568 @@
+/* Global shell styles for pgtable. Colors reference antd's CSS variables
+   (ConfigProvider cssVar: true) so everything tracks light/dark automatically. */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden; /* desktop shell: inner panes scroll, not the window */
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+::selection {
+  background: var(--ant-color-primary-bg, rgba(13, 148, 136, 0.18));
+}
+
+/* Numbers and identifiers read better with tabular figures wherever they appear. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Themed, slim scrollbars instead of the default chunky OS bars. */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--ant-color-border, rgba(128, 128, 128, 0.35));
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--ant-color-text-quaternary, rgba(128, 128, 128, 0.55));
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Visible keyboard focus, off by default for mouse users. */
+:focus-visible {
+  outline: 2px solid var(--ant-color-primary, #0d9488);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* ---- Make tab panes fill height so the grid can own the full viewport ----
+   antd's tab content/pane are not height:100% by default, which collapses any
+   height:100% child (the data grid) to its content height. */
+.pg-fill-tabs {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.pg-fill-tabs > .ant-tabs-content-holder {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.pg-fill-tabs > .ant-tabs-content-holder > .ant-tabs-content {
+  height: 100%;
+}
+.pg-fill-tabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
+  height: 100%;
+}
+
+/* ---- Data grid (hand-rolled table in DataGrid.tsx) ---- */
+/* Columns size to their content (capped per cell); the table grows past the
+   viewport and scrolls horizontally rather than squeezing every column. */
+.pg-grid {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+  border-collapse: collapse;
+  font-family: var(--ant-font-family-code, ui-monospace, monospace);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pg-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  font-family: var(--ant-font-family, system-ui);
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 7px 10px;
+  /* Opaque base + tint overlay. fill-alter alone is alpha-based, so scrolled
+     rows bleed through the sticky header. */
+  background-color: var(--ant-color-bg-container, #fff);
+  background-image: linear-gradient(
+    var(--ant-color-fill-alter, #fafafa),
+    var(--ant-color-fill-alter, #fafafa)
+  );
+  border-bottom: 1px solid var(--ant-color-border, #e8e8e8);
+  color: var(--ant-color-text-secondary, #555);
+}
+
+.pg-grid tbody td {
+  padding: 5px 10px;
+  max-width: 520px; /* cap a single runaway column; everything else fits content */
+  overflow: hidden;
+  border-bottom: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  color: var(--ant-color-text, #1f1f1f);
+}
+
+/* Vertical record view: field|value table. Field column stays compact and
+   acts as a row label, value column expands to fill. */
+.pg-record-grid {
+  width: 100%;
+  max-width: 900px;
+}
+.pg-record-grid tbody th.pg-record-field {
+  text-align: left;
+  font-family: var(--ant-font-family, system-ui);
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 6px 12px 6px 0;
+  color: var(--ant-color-text-secondary, #555);
+  border-bottom: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  vertical-align: top;
+  width: 1%;
+}
+.pg-record-grid tbody td {
+  max-width: none;
+  white-space: normal;
+  word-break: break-word;
+}
+.pg-record-grid .pg-cell {
+  white-space: pre-wrap;
+}
+
+/* "All" mode of the vertical view: one column per record, field names down the
+   left. Field column sticks to the left while the record columns scroll. */
+.pg-record-grid-all {
+  width: max-content;
+  max-width: none;
+}
+.pg-record-grid-all thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--ant-color-bg-container, #fff);
+  background-image: linear-gradient(
+    var(--ant-color-fill-alter, #fafafa),
+    var(--ant-color-fill-alter, #fafafa)
+  );
+}
+.pg-record-grid-all .pg-record-field {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  /* Must be fully opaque — sticky cells overlay scrolled content. antd's
+     fill-quaternary token is alpha-based and would let values bleed through
+     on dark themes. */
+  background: var(--ant-color-bg-container, #fff);
+  padding: 6px 16px 6px 12px;
+  border-right: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  width: auto;
+}
+.pg-record-grid-all thead .pg-record-field-head {
+  z-index: 3; /* above both sticky-row and sticky-col layers */
+  background-color: var(--ant-color-bg-container, #fff);
+  background-image: linear-gradient(
+    var(--ant-color-fill-alter, #fafafa),
+    var(--ant-color-fill-alter, #fafafa)
+  );
+}
+.pg-record-grid-all .pg-record-col-head {
+  text-align: left;
+  font-family: var(--ant-font-family, system-ui);
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 7px 12px;
+  color: var(--ant-color-text-secondary, #555);
+  border-bottom: 1px solid var(--ant-color-border, #e8e8e8);
+  min-width: 160px;
+}
+.pg-record-grid-all tbody td {
+  min-width: 160px;
+  max-width: 480px;
+  vertical-align: top;
+  padding: 5px 12px;
+}
+/* Drop the row-stripe / hover overrides on the sticky field column. Any
+   non-opaque variant lets the scrolled value cells show through. */
+.pg-cell {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pg-row {
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.pg-row:nth-child(even) {
+  background: var(--ant-color-fill-quaternary, rgba(0, 0, 0, 0.02));
+}
+.pg-row:hover {
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.04));
+}
+.pg-row-selected,
+.pg-row-selected:hover,
+.pg-row-selected:nth-child(even) {
+  background: var(--ant-color-primary-bg, rgba(13, 148, 136, 0.12));
+  box-shadow: inset 2px 0 0 var(--ant-color-primary, #0d9488);
+}
+
+.pg-null {
+  color: var(--ant-color-text-quaternary, #bbb);
+  font-style: italic;
+}
+
+/* Blank filler rows: same height/gridlines as data rows, but inert. */
+.pg-row-filler {
+  cursor: default;
+}
+.pg-row-filler td {
+  color: transparent;
+  user-select: none;
+}
+
+/* Inline editor input: blends into the cell but stays clearly focusable. */
+.pg-edit-input {
+  width: 100%;
+  min-width: 80px;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  font: inherit;
+  color: inherit;
+  background: var(--ant-color-bg-container, #fff);
+  border: 1px solid var(--ant-color-border, #d9d9d9);
+  border-radius: 4px;
+  outline: none;
+}
+.pg-edit-input:focus {
+  border-color: var(--ant-color-primary, #0d9488);
+  box-shadow: 0 0 0 2px var(--ant-color-primary-bg, rgba(13, 148, 136, 0.18));
+}
+.pg-edit-input:disabled {
+  opacity: 0.6;
+}
+
+/* ---- Shared lazy-load spinners (see components/Loading.tsx) ---- */
+.pg-loading-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 120px;
+  padding: 24px;
+}
+
+.pg-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+  /* Subtle backdrop so the spinner reads cleanly over data without hiding it. */
+  background: var(--ant-color-bg-mask, rgba(255, 255, 255, 0.35));
+  backdrop-filter: blur(0.5px);
+}
+
+/* ---- Column header filter icon: only revealed on header hover (or always when
+   a filter is active for that column). ---- */
+.pg-th-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pg-th-label {
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+}
+.pg-filter-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ant-color-text-tertiary, #999);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.pg-grid thead th:hover .pg-filter-icon,
+.pg-filter-icon-active {
+  opacity: 1;
+}
+.pg-filter-icon-active {
+  color: var(--ant-color-primary, #0d9488);
+}
+.pg-filter-icon:hover {
+  color: var(--ant-color-primary, #0d9488);
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.04));
+}
+
+/* ---- Sidebar tree: truncate long names instead of wrapping ---- */
+.ant-tree .ant-tree-node-content-wrapper {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0; /* let the title shrink below its content width so ellipsis kicks in */
+  overflow: hidden;
+}
+.ant-tree .ant-tree-node-content-wrapper .ant-tree-iconEle {
+  flex-shrink: 0;
+}
+.ant-tree .ant-tree-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Sidebar resize handle ---- */
+.pg-resizer {
+  position: relative;
+  width: 6px;
+  flex-shrink: 0;
+  margin-left: -3px; /* straddle the sidebar's right border so the grab area is centered */
+  z-index: 5;
+  cursor: col-resize;
+  background: transparent;
+}
+.pg-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+.pg-resizer:hover::after,
+.pg-resizer:focus-visible::after,
+body[style*='col-resize'] .pg-resizer::after {
+  background: var(--ant-color-primary, #0d9488);
+}
+.pg-resizer:focus-visible {
+  outline: none;
+}
+
+/* ---- Horizontal splitter (SQL editor / results) ---- */
+.pg-row-resizer {
+  position: relative;
+  height: 6px;
+  flex-shrink: 0;
+  margin-top: -3px;
+  margin-bottom: -3px;
+  z-index: 5;
+  cursor: row-resize;
+  background: transparent;
+}
+.pg-row-resizer::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--ant-color-border-secondary, rgba(0, 0, 0, 0.06));
+  transition: background-color 120ms ease;
+}
+.pg-row-resizer:hover::after,
+.pg-row-resizer:focus-visible::after,
+body[style*='row-resize'] .pg-row-resizer::after {
+  background: var(--ant-color-primary, #0d9488);
+}
+.pg-row-resizer:focus-visible {
+  outline: none;
+}
+
+/* ---- Sidebar connection row ---- */
+.pg-conn-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding-right: 2px;
+}
+
+.pg-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Live connection: solid dot with a slow expanding pulse ring. */
+.pg-dot-live {
+  background: var(--dot);
+}
+.pg-dot-live::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+  border: 2px solid var(--dot);
+  opacity: 0;
+  animation: pg-pulse 2.4s ease-out infinite;
+}
+@keyframes pg-pulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.45;
+  }
+  100% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+
+/* Name + host on one line; name leads, host is muted mono and truncates first. */
+.pg-conn-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+}
+.pg-conn-name {
+  flex-shrink: 0;
+  font-weight: 500;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pg-conn-host {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--ant-font-family-code, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--ant-color-text-tertiary, #999);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The "more" menu sits at a clean right edge and only appears on row hover,
+   keeping the resting state calm. Stays visible while its menu is open. */
+.pg-conn-action {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--ant-color-text-quaternary, #999);
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+.ant-tree-treenode:hover .pg-conn-action,
+.pg-conn-action:focus-visible,
+.pg-conn-action[aria-expanded='true'] {
+  opacity: 1;
+}
+.pg-conn-action:hover {
+  color: var(--ant-color-text, #1f1f1f);
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.06));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- Sidebar flat search results ---- */
+.pg-search-results {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The sidebar is a navigation pane — text selection inside it has no use and
+ * just causes double-click highlights when opening rows. Kill it globally
+ * here so every Tree node, search hit, and connection row stays clean. */
+.pg-sidebar,
+.pg-sidebar * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pg-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.4;
+  outline: none;
+}
+
+.pg-search-row:hover,
+.pg-search-row:focus-visible {
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.06));
+}
+
+.pg-search-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.pg-search-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The SQL editor wrapper has a fixed height with overflow:hidden, but
+   CodeMirror's scroller only enables horizontal scrolling by default and its
+   uiw root div (.cm-theme-*) has no height. Force the whole chain to fill the
+   wrapper and let the scroller scroll vertically so long queries don't get
+   clipped past the fixed height. */
+.pg-sql-editor-wrap > * {
+  height: 100%;
+}
+
+.pg-sql-editor-wrap .cm-editor {
+  height: 100%;
+}
+
+.pg-sql-editor-wrap .cm-scroller {
+  overflow: auto;
+}
+
+.pg-search-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
