@@ -21,6 +21,8 @@ The usual way to query across Postgres databases is `postgres_fdw` or `dblink`,
 which a DBA has to install and configure **on the database server**. Often you
 don't have that access, or the databases live on different hosts entirely.
 
+![Federated query tab: two PostgreSQL databases attached under aliases qa and qa_2, ready to run one SQL statement across both via DuckDB](img/pgtable.jpg)
+
 pgtable sidesteps that. It embeds an **in-process DuckDB engine** with DuckDB's
 `postgres` extension, and treats your existing connections as attachable
 catalogs:
@@ -79,6 +81,8 @@ columns, and foreign keys — to Anthropic's Claude and drops a runnable query
 into the editor. It uses the foreign keys to auto-join related tables, including
 multi-hop and composite-key joins, and reasons about ambiguous join paths rather
 than guessing.
+
+![Generate federated SQL with AI dialog: the model sees the tables and foreign keys of the attached databases and writes DuckDB SQL from a plain-language description](img/pgtable_Ai.jpg)
 
 Three entry points:
 
