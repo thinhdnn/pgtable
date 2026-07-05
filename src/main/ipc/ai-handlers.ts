@@ -32,7 +32,7 @@ import {
   type FederatedSchemaContext
 } from '../ai/prompt'
 
-// Dev-only prompt logging (Mức A). In a packaged build this is a no-op, so the
+// Dev-only prompt logging (Level A). In a packaged build this is a no-op, so the
 // exact schema/FK/paths context sent to Claude never leaks to end users; while
 // developing, print it to the main-process console so you can see what the model
 // actually received when a generated query looks wrong.

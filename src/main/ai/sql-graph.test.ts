@@ -91,8 +91,8 @@ describe('detectRequestTables', () => {
   const names = ['users', 'roles', 'groups', 'user_groups', 'group_roles']
 
   it('matches singular request words to plural table names', () => {
-    // "tìm user có role Admin"
-    expect(detectRequestTables(names, 'tìm user có role Admin').sort()).toEqual(['roles', 'users'])
+    // "find the user with role Admin"
+    expect(detectRequestTables(names, 'find the user with role Admin').sort()).toEqual(['roles', 'users'])
   })
 
   it('ignores short noise words and unmentioned tables', () => {

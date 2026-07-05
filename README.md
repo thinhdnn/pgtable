@@ -1,272 +1,169 @@
-# repository-harness
+# pgtable
 
-Turn any software repo into an agent-ready workspace.
+A lightweight PostgreSQL desktop browser with two things a normal table viewer
+doesn't give you:
 
-`repository-harness` is a repository-level operating harness for Claude Code,
-Codex, Cursor, and other coding agents. It gives agents the missing project
-context they need before they change code: where to start, what the product
-contract says, how risky the work is, what proof is required, and which
-decisions future agents should inherit.
+1. **Ask AI** — describe what you want in plain language and get a runnable SQL
+   query, with joins inferred from your schema's foreign keys.
+2. **Federated queries via DuckDB** — run a single SQL statement across several
+   Postgres databases at once, **without installing any extension on the
+   database servers**.
 
-The app is what users touch. The harness is what agents touch.
+Built as an Electron app (React + Ant Design). It aims for a cold start under
+two seconds, lazy loading at every tree level, and a minimal UI that favours
+browsing speed over feature count.
 
-## Why Star This Repo
+---
 
-Star this repo if you want practical, reusable patterns for making AI-assisted
-software development more reliable, inspectable, and easier for humans to steer.
+## Federated queries — join across databases, no server-side extension
 
-This project is exploring a simple idea:
+The usual way to query across Postgres databases is `postgres_fdw` or `dblink`,
+which a DBA has to install and configure **on the database server**. Often you
+don't have that access, or the databases live on different hosts entirely.
 
-> Coding agents do not only need better prompts. They need better repositories.
+pgtable sidesteps that. It embeds an **in-process DuckDB engine** with DuckDB's
+`postgres` extension, and treats your existing connections as attachable
+catalogs:
 
-## The Problem
+```
+   ┌─────────────┐     ATTACH (READ_ONLY)     ┌──────────────┐
+   │  pgtable    │ ─────────────────────────▶ │  auth  (pg)  │
+   │             │                            └──────────────┘
+   │  DuckDB     │ ─────────────────────────▶ ┌──────────────┐
+   │  (in-app)   │                            │  billing (pg)│
+   └─────────────┘                            └──────────────┘
+        one SQL statement spanning both
+```
 
-Most repos are built for humans reading code in a familiar codebase. Coding
-agents usually enter with only a chat prompt and a shallow snapshot of files.
-That leads to common failure modes:
+For each run pgtable:
 
-- The agent edits code before understanding product intent.
-- Important constraints live only in chat history or in someone's head.
-- Validation expectations are vague or discovered too late.
-- Architecture tradeoffs are repeated instead of inherited.
-- Large requests do not get broken into reviewable story-sized work.
+1. Spins up a **fresh in-memory DuckDB** instance.
+2. `INSTALL postgres` + `LOAD postgres` (the extension lives in the app, not on
+   your servers; downloaded once to DuckDB's local cache, then reused).
+3. `ATTACH`es each selected connection **`READ_ONLY`** under a catalog alias
+   derived from the connection name.
+4. Sets a `search_path` from every `alias.schema` so unqualified table names
+   resolve, then runs your statement and tears the instance down.
 
-## The Harness Approach
+What this means for you:
 
-A repository starts to have a harness when it helps an agent answer practical
-engineering questions without relying only on chat history:
+- **Nothing to install on the database side.** No `postgres_fdw`, no `dblink`,
+  no superuser. If pgtable can connect to a database, it can join it.
+- **Cross-host, cross-database.** Attach databases from different servers in the
+  same query.
+- **Read-only by construction.** Only `SELECT` / `WITH` statements are accepted;
+  every attach is `READ_ONLY`, so a federated query can never mutate your data.
+- **Qualify to disambiguate.** When the same table name exists in two attached
+  databases, reference it as `alias.schema.table`.
 
-- What should I read first?
-- What type of work is this?
-- Which product contract does it affect?
-- How risky is the change?
-- What proof will show the work is done?
-- What decision or lesson should future agents inherit?
+Saved federated queries persist locally (attachments + SQL + row-limit flag) so
+you can reopen and re-run them.
 
-In this repo, those answers live in:
+> First federated run needs network access once so DuckDB can fetch the
+> `postgres` extension into its local cache. After that it works from cache.
 
-- `AGENTS.md` — the stable agent shim with local project notes and Harness
-  doc links.
-- `docs/HARNESS.md` — the human-agent collaboration model.
-- `docs/FEATURE_INTAKE.md` — tiny, normal, and high-risk work classification.
-- `docs/ARCHITECTURE.md` — architecture discovery and boundary rules.
-- `docs/TEST_MATRIX.md` — behavior-to-proof validation expectations.
-- `docs/stories/` — story packets and backlog items.
-- `docs/decisions/` — durable decisions and tradeoffs.
-- `docs/templates/` — reusable spec, story, decision, and validation templates.
+### Linked Query (an alternative for the no-shared-engine case)
 
-OpenAI describes this shift as an agent-first world where humans steer and
-agents execute:
+There's also a simpler **two-step Linked Query**: run a read-only `SELECT` in
+one database, pick a key column from the result, and push those keys into a
+second query (`:step1.<column>` is rewritten into a parameterised
+`IN ($1, …, $n)`) — commonly against a different connection. Useful for
+foreign-key-style relationships spread across databases.
 
-https://openai.com/index/harness-engineering/
+---
 
-## Install Harness Into A Project
+## Ask AI — natural language to SQL
 
-From a target project directory, run:
+Type a request in plain language; pgtable sends the relevant **schema** — tables,
+columns, and foreign keys — to Anthropic's Claude and drops a runnable query
+into the editor. It uses the foreign keys to auto-join related tables, including
+multi-hop and composite-key joins, and reasons about ambiguous join paths rather
+than guessing.
+
+Three entry points:
+
+| Where | What it does | What leaves your machine |
+| --- | --- | --- |
+| **Query tab** | Natural language → PostgreSQL for the selected schema | Schema only (table/column/FK names) — **no row data** |
+| **Federated tab** | Natural language → DuckDB SQL across the attached databases | Schema of the attached databases — **no row data** |
+| **Ask about this row** | Ask a question about one specific row | The row's values (shown to you first, with a warning) |
+
+Design choices (see [docs/decisions/0008-anthropic-sql-generation.md](docs/decisions/0008-anthropic-sql-generation.md)):
+
+- **Generate-and-display only.** The AI never executes anything. You review the
+  SQL and run it yourself. Non-`SELECT` output gets a warning.
+- **Key stays in the main process.** All Claude calls run in Electron's main
+  process. Your API key never enters the renderer; the UI only learns whether a
+  key "is set."
+- **Schema, not data.** The SQL-generation paths send only schema metadata. The
+  only path that sends actual row values is "Ask about this row," and it shows
+  you the payload before sending.
+- Default model `claude-sonnet-4-6` (Opus available as a quality upgrade).
+
+### Setup
+
+1. Get an Anthropic API key from <https://console.anthropic.com/>.
+2. Open **Settings** in pgtable and paste the key. It's stored locally via
+   `electron-store` (plaintext at rest for now, consistent with the app's
+   current connection-password handling — encryption is a tracked follow-up).
+
+The AI features are optional; connecting, browsing, and manual SQL all work
+without a key.
+
+---
+
+## Other features
+
+- **Connection management** — save multiple Postgres connections.
+- **Explorer** — lazy database / schema / table tree; nothing is loaded upfront.
+- **Table viewer** — paginated grid (`SELECT * … LIMIT/OFFSET`, default 100
+  rows), server-side sort, a columns/metadata tab, and copy cell / row / rows.
+- **SQL editor** — CodeMirror with SQL highlighting, autocompletion, and
+  formatting.
+- **Saved scripts & saved federated queries** — kept locally.
+
+---
+
+## Tech stack
+
+- **Electron** + **electron-vite** — desktop shell and build.
+- **React 18** + **Ant Design** + **TanStack Query/Table** — UI.
+- **CodeMirror** — SQL editing.
+- **[`pg`](https://node-postgres.com/)** — Postgres access (main process only).
+- **[`@duckdb/node-api`](https://duckdb.org/)** — in-process federation engine.
+- **[`@anthropic-ai/sdk`](https://docs.claude.com/)** — Ask AI.
+- **electron-store** — local settings, connections, and saved queries.
+
+The database drivers and all secrets live in the Electron **main process**; the
+renderer talks to them only over IPC and never sees connection strings or the
+API key.
+
+---
+
+## Development
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/hoangnb24/repository-harness/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --yes
+npm install       # native modules (pg, duckdb) are rebuilt for Electron
+npm run dev       # start in dev mode
+npm run build     # type-check + build
+npm run package   # build a distributable via electron-builder
+
+npm test          # vitest
+npm run typecheck # tsc for node + web
+npm run lint       # eslint
 ```
 
-On Windows PowerShell, run:
+Requires Node.js and, for the AI features, an Anthropic API key entered in
+Settings.
 
-```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/hoangnb24/repository-harness/main/scripts/install-harness.ps1"))) -Yes
-```
+---
 
-If the target already has `AGENTS.md`, `docs/`, or `scripts/`, choose one:
+## Security notes
 
-```bash
-# Update an existing Harness repo without moving existing files
-curl -fsSL "https://raw.githubusercontent.com/hoangnb24/repository-harness/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --merge --yes
-
-# Back up and replace AGENTS.md, docs/, and scripts/
-curl -fsSL "https://raw.githubusercontent.com/hoangnb24/repository-harness/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --override --yes
-```
-
-```powershell
-# Update an existing Harness repo without moving existing files
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/hoangnb24/repository-harness/main/scripts/install-harness.ps1"))) -Merge -Yes
-
-# Back up and replace AGENTS.md, docs/, and scripts/
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/hoangnb24/repository-harness/main/scripts/install-harness.ps1"))) -Override -Yes
-```
-
-Use `--merge` when a project already has Harness and you want to append newly
-added Harness files without moving the existing `AGENTS.md`, `docs/`, or
-`scripts/` paths into backup. Existing files stay untouched; only missing
-Harness files are created.
-
-For older Harness installs whose `AGENTS.md` still contains the full generated
-operating guide, refresh it into the small stable shim:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/hoangnb24/repository-harness/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --merge --refresh-agent-shim --yes
-```
-
-The refresh backs up the existing file. If it detects the old
-Harness-generated guide, it replaces it with the shim. If the file appears
-custom, it appends or updates a marked Harness block instead of overwriting the
-project's local instructions.
-
-If the project is driven with Claude Code, add `--claude`. Claude Code never
-auto-loads `AGENTS.md`, so without this the installed harness is invisible to
-fresh sessions. The flag installs (or refreshes) a `CLAUDE.md` whose marked
-Harness block `@`-imports `AGENTS.md` and `docs/FEATURE_INTAKE.md` into every
-session's context. An existing `CLAUDE.md` gets the block appended after a
-backup; plain installs without the flag never touch `CLAUDE.md`:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/hoangnb24/repository-harness/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --claude --yes
-```
-
-Or install into a specific path:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/hoangnb24/repository-harness/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --directory /path/to/project --yes
-```
-
-```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/hoangnb24/repository-harness/main/scripts/install-harness.ps1"))) -Directory C:\path\to\project -Yes
-```
-
-Use `--dry-run` on Bash or `-DryRun` on PowerShell to preview changes before
-writing files.
-
-The installer also downloads the prebuilt Harness CLI for the current platform,
-verifies its `.sha256` checksum, and installs it at
-`scripts/bin/harness-cli` on macOS/Linux or `scripts/bin/harness-cli.exe` on
-Windows. The Rust CLI is the main Harness tool and stable command path.
-
-Harness CLI release assets are published from tags by the
-`Harness CLI Release` GitHub Actions workflow. The installer expects each
-release to include `harness-cli-<platform>` and
-`harness-cli-<platform>.sha256` assets for macOS arm64, macOS x64, Linux x64,
-Linux arm64, and Windows x64. The Windows asset is
-`harness-cli-windows-x64.exe` plus `harness-cli-windows-x64.exe.sha256`.
-
-Merged pull requests are recorded in `CHANGELOG.md` by the
-`Post-Merge Maintenance` workflow. When a merged PR changes the Rust CLI source,
-schema, Cargo metadata, or CLI release packaging, that workflow bumps the CLI
-patch version, updates `scripts/harness-cli-release-tag`, creates a
-`harness-cli-v*` tag, and runs the Harness CLI release build for that tag.
-
-## Try The Flow
-
-The fastest way to understand the harness is to inspect the tiny demo:
-
-- `docs/demo/README.md`: shows how a simple product idea becomes product docs,
-  stories, validation expectations, and decisions before implementation starts.
-
-A typical flow looks like this:
-
-```text
-human intent or product spec
-  -> product contract
-  -> feature intake
-  -> story packet
-  -> validation expectations
-  -> implementation work
-  -> decision or lesson captured for future agents
-```
-
-Implementation prompts do not go straight to code. They first pass through
-feature intake, become story-sized work when needed, and then carry both product
-validation and harness maintenance expectations.
-
-## Tool Registry
-
-The harness can use optional external tools (linters, code-graph servers,
-deploy checks) without depending on any of them. You register a tool as a
-provider of a *capability*, the harness scans whether it is actually present,
-and a workflow step uses whatever is equipped — an absent tool is a clean skip,
-never a failure.
-
-```bash
-# register a tool as a provider of a capability
-scripts/bin/harness-cli tool register --name deploy-check --kind cli \
-  --capability deploy-verification --command ./scripts/deploy-check.sh \
-  --responsibility Verification --description "Verify deploy health before release"
-
-# scan presence (writes present/missing/unknown)
-scripts/bin/harness-cli tool check
-
-# a step looks up what is equipped for a purpose
-scripts/bin/harness-cli query tools --capability deploy-verification --status present
-```
-
-Kinds (`cli`, `binary`, `mcp`, `skill`, `http`) make it agent-generic: each
-agent runtime uses what it can orchestrate. See `docs/TOOL_REGISTRY.md` for the
-full model, the degrade ladder, and how to wire a tool into a flow step.
-
-## Current State
-
-This repository is in Harness v0.
-
-There is no application implementation and no baked-in product specification
-yet. The current work is the reusable project harness: the file structure,
-agent operating model, feature intake process, story templates, and validation
-expectations that help humans and agents turn a future user-provided spec into
-implementation work.
-
-## Product Sources
-
-No product contract is currently defined.
-
-When a user provides a project specification, add or reference it as the input
-spec for the first buildout, then derive smaller living artifacts from it:
-
-- `docs/product/`: current product contract files, created from the spec.
-- `docs/stories/`: story packets and backlog created from selected work.
-- `docs/TEST_MATRIX.md`: behavior-to-proof control panel.
-- `docs/decisions/`: durable decisions and tradeoffs.
-
-Do not keep a project-specific spec or product breakdown in this harness until
-a real project supplies one.
-
-## Repository Structure
-
-```text
-project/
-  AGENTS.md
-  README.md
-  docs/
-    HARNESS.md
-    FEATURE_INTAKE.md
-    ARCHITECTURE.md
-    TEST_MATRIX.md
-    HARNESS_BACKLOG.md
-    product/
-    stories/
-    decisions/
-    demo/
-    templates/
-  scripts/
-    README.md
-```
-
-## Contributing
-
-This project is early and benefits most from real-world agent failure cases,
-example harness installs, docs improvements, and reusable workflow patterns.
-See `CONTRIBUTING.md` for contribution ideas.
-
-Useful contributions include:
-
-- Show how the harness works in a real project.
-- Add missing templates or improve existing ones.
-- Propose validation patterns for different stacks.
-- Share failures where an agent made the wrong change because the repo lacked
-  context.
-- Compare harness behavior across Claude Code, Codex, Cursor, and other tools.
-
-## Share
-
-If this idea resonates, please star the repo and share it with someone building
-with coding agents.
-
-Short description:
-
-> An agent-ready repo harness for Claude Code, Codex, Cursor, and other coding
-> agents: AGENTS.md, product contracts, story packets, validation matrix, and
-> decision records.
+- Federated attaches are always `READ_ONLY`; only `SELECT` / `WITH` statements
+  run through DuckDB and Linked Query.
+- Connection strings carry passwords and are never logged.
+- API key and connection passwords are stored locally in plaintext for now
+  (encryption is a tracked follow-up); they never leave your machine except that
+  Claude calls send **schema metadata only** (and, for "Ask about this row," the
+  row you explicitly choose to send).

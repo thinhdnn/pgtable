@@ -15,8 +15,8 @@
 
 ## Test 1 — single join + aggregation
 
-Request (vi): "Liệt kê tên khách hàng cùng tổng tiền tất cả đơn hàng của họ, sắp
-xếp giảm dần." HTTP 200. Generated:
+Request: "List customer names together with the total amount of all their
+orders, sorted descending." HTTP 200. Generated:
 
 ```sql
 SELECT c.name, SUM(o.total) AS total_amount

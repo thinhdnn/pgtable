@@ -17,9 +17,9 @@ collected from Step 1 are pushed down into `WHERE <col> IN ($1, $2, ...)` using
 parameterised placeholders. The final grid shows only Step 2's rows. No cross-DB
 JOIN engine, no new native dependency, no persistence.
 
-This is the smallest useful shape of what the user calls "bảng ảo" — a virtual
-table that lets a user look up rows in database B keyed by a set of ids that
-only live in database A.
+This is the smallest useful shape of what the user calls a "virtual table" — a
+virtual table that lets a user look up rows in database B keyed by a set of ids
+that only live in database A.
 
 ## Locked Decisions
 
