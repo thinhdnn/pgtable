@@ -1031,7 +1031,11 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
         )}
         {!error && result && result.rows.length === 0 && (
           <div style={{ padding: 16, fontSize: 13 }}>
-            <div style={{ opacity: 0.65 }}>{result.command || 'OK'} — no rows returned.</div>
+            <div style={{ opacity: 0.65 }}>
+              {['INSERT', 'UPDATE', 'DELETE'].includes(result.command || '')
+                ? `${result.command} · ${result.rowCount} row${result.rowCount === 1 ? '' : 's'} affected.`
+                : `${result.command || 'OK'} — no rows returned.`}
+            </div>
             {hasFilterTerms && (
               <div style={{ marginTop: 10 }}>
                 <Button

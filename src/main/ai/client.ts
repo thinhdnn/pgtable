@@ -2,9 +2,11 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { AiCheckSqlResult, AiCheckSeverity } from '@shared/types'
 import type { UserMessageParts } from './prompt'
 
-// Default model confirmed by the 2026-07-01 spike (docs/decisions/0008). Opus
-// 4.8 is a drop-in quality upgrade if needed.
-export const DEFAULT_MODEL = 'claude-sonnet-4-6'
+// Default model confirmed by the 2026-07-01 spike (docs/decisions/0008).
+// Upgraded from claude-sonnet-4-6 to Opus 4.8 for stronger intent-reading on
+// ambiguous / DML (insert-and-link) requests where Sonnet misinterpreted the
+// task. Sonnet remains a drop-in downgrade for lower cost/latency if needed.
+export const DEFAULT_MODEL = 'claude-opus-4-8'
 
 // The user message is either a plain string (no caching) or a split prefix/tail.
 // For the split form we mark the schema context with cache_control so repeated
@@ -41,7 +43,10 @@ export async function generateSqlFromClaude(
   const client = new Anthropic({ apiKey })
   const res = await client.messages.create({
     model,
-    max_tokens: 700,
+    // Seed/INSERT scripts (e.g. "insert every scope") easily exceed a single
+    // SELECT's length; a low cap truncates the SQL mid-statement. Keep this
+    // generous so full multi-row statements come back intact.
+    max_tokens: 8192,
     system: systemPrompt,
     messages: [{ role: 'user', content: toMessageContent(userMessage) }]
   })

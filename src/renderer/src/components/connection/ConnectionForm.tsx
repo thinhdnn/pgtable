@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react'
 import { Modal, Form, Input, InputNumber, Select, Button, Space, message } from 'antd'
+import { PlusOutlined, MinusCircleOutlined } from '@ant-design/icons'
 import type { Connection, ConnectionInput, SslMode } from '@shared/types'
 import { useAddConnection, useUpdateConnection, useTestConnection } from '../../hooks/useConnections'
 
@@ -23,6 +24,7 @@ const EMPTY: ConnectionInput = {
   password: '',
   ssl_mode: 'prefer',
   default_database: 'postgres',
+  databases: [],
   description: ''
 }
 
@@ -37,7 +39,9 @@ export function ConnectionForm({ open, existing, initialValues, onClose }: Props
 
   useEffect(() => {
     if (open) {
-      form.setFieldsValue(existing ?? initialValues ?? EMPTY)
+      // Spread over EMPTY: `setFieldsValue` merges, so a connection that omits
+      // `databases` would otherwise inherit the previously opened one's list.
+      form.setFieldsValue({ ...EMPTY, ...(existing ?? initialValues ?? {}) })
     }
   }, [open, existing, initialValues, form])
 
@@ -100,6 +104,41 @@ export function ConnectionForm({ open, existing, initialValues, onClose }: Props
         </Form.Item>
         <Form.Item name="default_database" label="Default Database">
           <Input placeholder="postgres" />
+        </Form.Item>
+        <Form.Item
+          label="Databases"
+          tooltip="Leave empty to auto-discover every database on the server. Add names to show only those — needed when the role can't read pg_database."
+          style={{ marginBottom: 16 }}
+        >
+          <Form.List name="databases">
+            {(fields, { add, remove }) => (
+              <>
+                {fields.map(({ key, name, ...restField }) => (
+                  <div key={key} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <Form.Item
+                      {...restField}
+                      name={name}
+                      rules={[
+                        { required: true, whitespace: true, message: 'Enter a name or remove this row' }
+                      ]}
+                      style={{ flex: 1, marginBottom: 0 }}
+                    >
+                      <Input placeholder="analytics" />
+                    </Form.Item>
+                    <Button
+                      type="text"
+                      icon={<MinusCircleOutlined />}
+                      onClick={() => remove(name)}
+                      aria-label={`Remove database ${name + 1}`}
+                    />
+                  </div>
+                ))}
+                <Button type="dashed" onClick={() => add('')} block icon={<PlusOutlined />}>
+                  Add database
+                </Button>
+              </>
+            )}
+          </Form.List>
         </Form.Item>
         <Form.Item name="description" label="Description">
           <Input.TextArea rows={2} />

@@ -88,6 +88,10 @@ export function registerDbHandlers(): void {
   ipcMain.handle(IPC.DB_LIST, async (_e, { connectionId }: { connectionId: string }) => {
     try {
       const pool = requirePool(connectionId)
+      const declared = getConnection(connectionId)?.databases
+      // An explicit allow-list wins: the catalog may be unreadable, or may hide
+      // databases this role can still open by name.
+      if (declared?.length) return [...declared].sort()
       const rows = await query<{ datname: string }>(
         pool,
         `SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname`
@@ -590,12 +594,16 @@ export function registerDbHandlers(): void {
           })
         }
 
-        // Discover additional databases per connected server (pg_database).
+        // Discover additional databases per connected server (pg_database),
+        // unless the connection declares an explicit allow-list.
         const cids = listConnectedIds()
         const discoveries = await Promise.all(
           cids.map(async (cid) => {
             const conn = getConnection(cid)
             if (!conn) return [] as Target[]
+            if (conn.databases?.length) {
+              return conn.databases.map((database) => ({ connectionId: cid, database }))
+            }
             try {
               const defaultPool = getOrCreatePool(conn)
               const rows = await query<{ datname: string }>(

@@ -8,6 +8,11 @@ export interface Connection {
   password: string
   ssl_mode: SslMode
   default_database: string
+  /** Explicit database allow-list. When non-empty, the app shows exactly these
+   *  databases and never queries `pg_database` — for servers where the role
+   *  can't read the catalog and a DB is only reachable if you know its name.
+   *  Empty/absent means auto-discover every non-template database. */
+  databases?: string[]
   description: string
   created_at: string
   updated_at: string
