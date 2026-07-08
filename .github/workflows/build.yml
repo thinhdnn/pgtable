@@ -1,0 +1,82 @@
+name: Build Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            build: npm run build && npx electron-builder --win --x64 --publish never
+          # macOS x64 and arm64 build on their own runners: @duckdb/node-api ships
+          # per-arch prebuilds and electron-builder.yml sets npmRebuild: false, so a
+          # cross-arch build would pack the host's .node into the wrong artifact.
+          - name: macos-arm64
+            os: macos-14
+            build: npm run build && npx electron-builder --mac --arm64 --publish never
+          - name: macos-x64
+            os: macos-13
+            build: npm run build && npx electron-builder --mac --x64 --publish never
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build and package
+        run: ${{ matrix.build }}
+        env:
+          # Unsigned builds. electron-builder skips codesign/notarization when no
+          # identity is present; set CSC_LINK/CSC_KEY_PASSWORD to sign.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pgtable-${{ matrix.name }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          draft: true
+          generate_release_notes: true
