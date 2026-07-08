@@ -4,9 +4,26 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Create a GitHub release from this build'
+        type: boolean
+        default: true
+      tag:
+        description: 'Tag name (blank = v<version> from package.json)'
+        type: string
+        required: false
+      draft:
+        description: 'Publish as draft'
+        type: boolean
+        default: true
+      scan:
+        description: 'Submit artifacts to VirusTotal (uploads are PUBLIC)'
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -62,21 +79,83 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  release:
-    name: Publish release
+  virustotal:
+    name: VirusTotal scan
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Never on PRs: uploads via the free public API are PUBLIC and rate-limited,
+    # so we do not submit every PR build. Manual runs opt in via the `scan` input.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.scan)
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      max_malicious: ${{ steps.scan.outputs.max_malicious }}
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
+      - name: Scan artifacts
+        id: scan
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: .github/scripts/vt-scan.sh artifacts/pgtable-*.dmg artifacts/pgtable-*.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: virustotal-report
+          path: vt-report.md
+
+  release:
+    name: Publish release
+    needs: [build, virustotal]
+    # `virustotal` is skipped when scanning is off, and a skipped `needs` would
+    # normally skip this job too -- hence the explicit result checks. A VT
+    # failure still blocks the release; a VT skip does not.
+    if: >-
+      !cancelled() &&
+      needs.build.result == 'success' &&
+      needs.virustotal.result != 'failure' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+       (github.event_name == 'workflow_dispatch' && inputs.release))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Resolve tag and release body
+        id: meta
+        env:
+          # Via env, never interpolated into the script body: `inputs.tag` is
+          # attacker-controlled text and `${{ }}` would splice it into bash.
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ -n "${INPUT_TAG}" ]]; then
+            tag="${INPUT_TAG}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="v$(node -p "require('./package.json').version")"
+          fi
+          echo "tag=${tag}" >>"$GITHUB_OUTPUT"
+          # The VT job may have been skipped; body_path must still point at a file.
+          [[ -f artifacts/vt-report.md ]] || echo "_VirusTotal scan skipped._" >artifacts/vt-report.md
+          echo "Releasing as ${tag}"
+
       - uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
-          draft: true
+          tag_name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          files: artifacts/pgtable-*
+          body_path: artifacts/vt-report.md
+          draft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           generate_release_notes: true
