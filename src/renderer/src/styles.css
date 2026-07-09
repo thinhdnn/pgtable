@@ -541,20 +541,83 @@ body[style*='row-resize'] .pg-row-resizer::after {
   white-space: nowrap;
 }
 
-/* The SQL editor wrapper has a fixed height with overflow:hidden, but
-   CodeMirror's scroller only enables horizontal scrolling by default and its
-   uiw root div (.cm-theme-*) has no height. Force the whole chain to fill the
-   wrapper and let the scroller scroll vertically so long queries don't get
-   clipped past the fixed height. */
-.pg-sql-editor-wrap > * {
+/* ---- Pane toolbar: the strip of actions above an editor or grid. The query,
+   federated and linked-query tabs all use it, so the three surfaces read as one
+   app rather than three. ---- */
+.pg-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--ant-color-border-secondary, #ebedf0);
+}
+
+/* Row count / timing, pushed to the toolbar's right edge. */
+.pg-toolbar-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* A second strip under the toolbar (the federated attach rows). Tinted so it
+   reads as chrome rather than content, and flush like the toolbar above it. */
+.pg-subbar {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  max-height: 168px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--ant-color-border-secondary, #ebedf0);
+  background: var(--ant-color-fill-quaternary, rgba(0, 0, 0, 0.02));
+}
+
+/* Explanatory copy under a toolbar. Capped near 65 characters so it reads as a
+   sentence instead of stretching the full width of the window. */
+.pg-hint {
+  max-width: 68ch;
+  text-wrap: pretty;
+}
+
+/* Aliases, placeholders and identifiers read as code. Mirrors `.tabular`. */
+.pg-mono {
+  font-family: var(--ant-font-family-code, ui-monospace, monospace);
+}
+
+/* Inert dashed box standing in for a result grid that has not run yet. */
+.pg-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 260px;
+  padding: 16px;
+  text-align: center;
+  border: 1px dashed var(--ant-color-border, #dfe3e8);
+  border-radius: 6px;
+  color: var(--ant-color-text-tertiary, #999);
+  font-size: 13px;
+}
+
+/* CodeMirror's scroller only enables horizontal scrolling by default, and the
+   uiw root div (.cm-theme-*) has no height of its own — so a long document
+   grows the editor instead of scrolling inside it. Force the whole chain to
+   fill its parent and let the scroller scroll vertically.
+
+   `.pg-sql-editor` is applied by the shared SqlEditor component, so every call
+   site gets this. It only bites when the editor's parent has a definite height;
+   a parent sized by its content still grows. */
+.pg-sql-editor {
+  height: 100%;
+  min-height: 0;
+}
+
+.pg-sql-editor .cm-editor {
   height: 100%;
 }
 
-.pg-sql-editor-wrap .cm-editor {
-  height: 100%;
-}
-
-.pg-sql-editor-wrap .cm-scroller {
+.pg-sql-editor .cm-scroller {
   overflow: auto;
 }
 
