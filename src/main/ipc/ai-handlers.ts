@@ -11,21 +11,35 @@ import type {
   AiAskRowPayload,
   AiAskRowResult,
   AiGenerateFederatedSqlPayload,
+  AiTroubleshootPayload,
+  AiTroubleshootResult,
   FuzzyValueGroup,
   FuzzyValueSuggestion
 } from '@shared/types'
+import { checkAiConfig, isAiProviderId, type AiProviderId } from '@shared/ai-providers'
 import { getConnection } from '../db/connection-store'
-import { getApiKey, setApiKey, hasApiKey } from '../db/settings-store'
+import {
+  getActiveAiConfig,
+  getProviderConfig,
+  getSettingsStatus,
+  setActiveProvider,
+  setProviderConfig
+} from '../db/settings-store'
 import { getOrCreatePool, isConnected } from '../pg/pool-manager'
 import { query, queryOne } from '../pg/query-runner'
-import { generateSqlFromClaude, checkSqlWithClaude, askAboutRowFromClaude } from '../ai/client'
+import { generateSql, checkSql, troubleshootSql, askAboutRow, type AiTarget } from '../ai/client'
+import { testProvider } from '../ai/providers'
 import {
   SYSTEM_PROMPT,
   SQL_CHECK_SYSTEM_PROMPT,
   ASK_ROW_SYSTEM_PROMPT,
   FEDERATED_SYSTEM_PROMPT,
+  TROUBLESHOOT_SYSTEM_PROMPT,
+  FEDERATED_TROUBLESHOOT_SYSTEM_PROMPT,
   buildUserMessageParts,
   buildCheckUserMessage,
+  buildTroubleshootUserMessage,
+  buildFederatedTroubleshootUserMessage,
   buildAskRowMessageParts,
   buildFederatedUserMessageParts,
   type SchemaTable,
@@ -141,19 +155,59 @@ async function fetchForeignKeys(
   )
 }
 
-export function registerAiHandlers(): void {
-  // Renderer only learns whether a key is configured — never the raw key.
-  ipcMain.handle(IPC.SETTINGS_GET, async () => {
-    return { hasApiKey: hasApiKey() }
-  })
+// Resolve the active provider, or the sentinel the renderer routes to Settings
+// on. `NO_API_KEY` predates multi-provider support and now means "the active
+// provider isn't configured" — a missing base URL or model lands here too,
+// because all three are fixed in the same place.
+function resolveTarget(): { target: AiTarget } | { error: 'NO_API_KEY' } {
+  const { provider, config } = getActiveAiConfig()
+  if (!checkAiConfig(provider, config).ok) return { error: 'NO_API_KEY' }
+  return { target: { provider, config } }
+}
 
-  ipcMain.handle(IPC.SETTINGS_SET, async (_e, { apiKey }: { apiKey: string }) => {
-    try {
-      setApiKey(apiKey)
-      return { ok: true, hasApiKey: hasApiKey() }
-    } catch (err) {
-      return { error: String(err) }
+export function registerAiHandlers(): void {
+  // Renderer learns the active provider and each provider's model/baseUrl plus a
+  // hasApiKey flag — never a raw key.
+  ipcMain.handle(IPC.SETTINGS_GET, async () => getSettingsStatus())
+
+  // Patch one provider's config and optionally make it active. An absent apiKey
+  // keeps the stored one, so the renderer can send the field blank.
+  ipcMain.handle(
+    IPC.SETTINGS_SET,
+    async (
+      _e,
+      {
+        provider,
+        apiKey,
+        model,
+        baseUrl,
+        setActive
+      }: {
+        provider: string
+        apiKey?: string
+        model?: string
+        baseUrl?: string
+        setActive?: boolean
+      }
+    ) => {
+      try {
+        if (!isAiProviderId(provider)) return { error: `Unknown AI provider "${provider}"` }
+        setProviderConfig(provider, { apiKey, model, baseUrl })
+        if (setActive) setActiveProvider(provider)
+        return { ok: true, ...getSettingsStatus() }
+      } catch (err) {
+        return { error: String(err) }
+      }
     }
+  )
+
+  // Smallest possible round trip against a provider, so a wrong base URL or
+  // model name surfaces in Settings rather than on the user's first Ask AI.
+  // Tests the *saved* config, so the renderer must save before testing.
+  ipcMain.handle(IPC.SETTINGS_TEST, async (_e, { provider }: { provider: string }) => {
+    if (!isAiProviderId(provider)) return { ok: false, error: `Unknown AI provider "${provider}"` }
+    const id: AiProviderId = provider
+    return await testProvider({ provider: id, config: getProviderConfig(id) })
   })
 
   // Generate SQL from a natural-language request. Gathers the selected schema's
@@ -166,8 +220,8 @@ export function registerAiHandlers(): void {
       { connectionId, database, schema, request, baseSql }: AiGenerateSqlPayload
     ): Promise<AiGenerateSqlResult | { error: string }> => {
       try {
-        const apiKey = getApiKey()
-        if (!apiKey) return { error: 'NO_API_KEY' }
+        const resolved = resolveTarget()
+        if ('error' in resolved) return resolved
         if (!request.trim()) return { error: 'Empty request' }
 
         const [tables, edges] = await Promise.all([
@@ -180,7 +234,7 @@ export function registerAiHandlers(): void {
 
         const parts = buildUserMessageParts(schema, tables, edges, request, baseSql)
         debugLogPrompt('generate-sql', parts.schemaContext + parts.request)
-        const sql = await generateSqlFromClaude(apiKey, SYSTEM_PROMPT, parts)
+        const sql = await generateSql(resolved.target, SYSTEM_PROMPT, parts)
         return { sql }
       } catch (err) {
         return { error: String(err) }
@@ -195,11 +249,11 @@ export function registerAiHandlers(): void {
     IPC.AI_GENERATE_FEDERATED_SQL,
     async (
       _e,
-      { attachments, request }: AiGenerateFederatedSqlPayload
+      { attachments, request, baseSql }: AiGenerateFederatedSqlPayload
     ): Promise<AiGenerateSqlResult | { error: string }> => {
       try {
-        const apiKey = getApiKey()
-        if (!apiKey) return { error: 'NO_API_KEY' }
+        const resolved = resolveTarget()
+        if ('error' in resolved) return resolved
         if (!request.trim()) return { error: 'Empty request' }
         if (attachments.length === 0) return { error: 'Attach at least one database first' }
 
@@ -213,9 +267,9 @@ export function registerAiHandlers(): void {
           })
         )
 
-        const parts = buildFederatedUserMessageParts(contexts, request)
+        const parts = buildFederatedUserMessageParts(contexts, request, baseSql)
         debugLogPrompt('generate-federated-sql', parts.schemaContext + parts.request)
-        const sql = await generateSqlFromClaude(apiKey, FEDERATED_SYSTEM_PROMPT, parts)
+        const sql = await generateSql(resolved.target, FEDERATED_SYSTEM_PROMPT, parts)
         return { sql }
       } catch (err) {
         return { error: String(err) }
@@ -233,8 +287,8 @@ export function registerAiHandlers(): void {
       { connectionId, database, schema, sql }: AiCheckSqlPayload
     ): Promise<AiCheckSqlResult | { error: string }> => {
       try {
-        const apiKey = getApiKey()
-        if (!apiKey) return { error: 'NO_API_KEY' }
+        const resolved = resolveTarget()
+        if ('error' in resolved) return resolved
         if (!sql.trim()) return { error: 'Empty query' }
 
         const [tables, edges] = await Promise.all([
@@ -243,7 +297,71 @@ export function registerAiHandlers(): void {
         ])
         const userMessage = buildCheckUserMessage(schema, tables, edges, sql)
         debugLogPrompt('check-sql', userMessage)
-        return await checkSqlWithClaude(apiKey, SQL_CHECK_SYSTEM_PROMPT, userMessage)
+        return await checkSql(resolved.target, SQL_CHECK_SYSTEM_PROMPT, userMessage)
+      } catch (err) {
+        return { error: String(err) }
+      }
+    }
+  )
+
+  // Explain a statement that already FAILED, and correct it when the SQL is the
+  // cause. Same context gathering as check-sql, plus the driver's error text —
+  // which is the single most informative input on this path, so an empty one is
+  // rejected before we spend a provider call.
+  //
+  // The federated branch sends each attachment's alias AND database: DuckDB names
+  // tables `alias.schema.table`, so a model that cannot see the alias list cannot
+  // tell a misspelled alias from a missing attachment. Never executes anything.
+  ipcMain.handle(
+    IPC.AI_TROUBLESHOOT_SQL,
+    async (_e, payload: AiTroubleshootPayload): Promise<AiTroubleshootResult | { error: string }> => {
+      try {
+        const resolved = resolveTarget()
+        if ('error' in resolved) return resolved
+        if (!payload.sql.trim()) return { error: 'Nothing to troubleshoot: the statement is empty' }
+        if (!payload.errorMessage.trim()) {
+          return { error: 'Nothing to troubleshoot: no error message was captured' }
+        }
+
+        if (payload.kind === 'federated') {
+          if (payload.attachments.length === 0) {
+            return { error: 'Attach at least one database first' }
+          }
+          const contexts: FederatedSchemaContext[] = await Promise.all(
+            payload.attachments.map(async (a) => {
+              const [tables, edges] = await Promise.all([
+                fetchSchemaTables(a.connectionId, a.database, a.schema),
+                fetchForeignKeys(a.connectionId, a.database, a.schema)
+              ])
+              return { alias: a.alias, database: a.database, schema: a.schema, tables, edges }
+            })
+          )
+          const userMessage = buildFederatedTroubleshootUserMessage(
+            contexts,
+            payload.sql,
+            payload.errorMessage
+          )
+          debugLogPrompt('troubleshoot-federated-sql', userMessage)
+          return await troubleshootSql(
+            resolved.target,
+            FEDERATED_TROUBLESHOOT_SYSTEM_PROMPT,
+            userMessage
+          )
+        }
+
+        const [tables, edges] = await Promise.all([
+          fetchSchemaTables(payload.connectionId, payload.database, payload.schema),
+          fetchForeignKeys(payload.connectionId, payload.database, payload.schema)
+        ])
+        const userMessage = buildTroubleshootUserMessage(
+          payload.schema,
+          tables,
+          edges,
+          payload.sql,
+          payload.errorMessage
+        )
+        debugLogPrompt('troubleshoot-sql', userMessage)
+        return await troubleshootSql(resolved.target, TROUBLESHOOT_SYSTEM_PROMPT, userMessage)
       } catch (err) {
         return { error: String(err) }
       }
@@ -261,8 +379,8 @@ export function registerAiHandlers(): void {
       { connectionId, database, schema, columns, row, question, sourceTable }: AiAskRowPayload
     ): Promise<AiAskRowResult | { error: string }> => {
       try {
-        const apiKey = getApiKey()
-        if (!apiKey) return { error: 'NO_API_KEY' }
+        const resolved = resolveTarget()
+        if ('error' in resolved) return resolved
         if (!question.trim()) return { error: 'Empty question' }
 
         const [tables, edges] = await Promise.all([
@@ -279,7 +397,7 @@ export function registerAiHandlers(): void {
           sourceTable
         )
         debugLogPrompt('ask-row', parts.schemaContext + parts.request)
-        const answer = await askAboutRowFromClaude(apiKey, ASK_ROW_SYSTEM_PROMPT, parts)
+        const answer = await askAboutRow(resolved.target, ASK_ROW_SYSTEM_PROMPT, parts)
         return { answer }
       } catch (err) {
         return { error: String(err) }

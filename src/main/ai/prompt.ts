@@ -173,6 +173,104 @@ export function buildCheckUserMessage(
   )
 }
 
+// The JSON contract shared by both troubleshoot prompts. The statement already
+// failed, so the interesting question is not "is this valid" but "why did the
+// server reject it, and what is the smallest correct rewrite".
+//
+// The `fixedSql: ""` instruction carries real weight: a connection drop, a
+// timeout, or a permission denial cannot be fixed by rewriting SQL, and the
+// renderer hides its Apply button precisely when this field comes back empty.
+// Inventing a query there would offer the user a fix that fixes nothing.
+const TROUBLESHOOT_CONTRACT =
+  'Respond with ONLY a JSON object — no markdown fences and no prose outside it — ' +
+  'of exactly this shape:\n' +
+  '{"ok": boolean, "summary": string, "issues": [{"severity": "error"|"warning"|"info", "message": string, "suggestion": string}], "fixedSql": string}\n' +
+  'Rules: "summary" is one sentence naming the actual cause. "ok" is false ' +
+  'whenever the statement failed. Each issue "message" is one sentence and ' +
+  '"suggestion" is a concrete fix (may be an empty string).\n' +
+  'Set "fixedSql" to a corrected, runnable statement ONLY when the failure is ' +
+  'caused by the SQL itself — a typo, a wrong or missing column or table, a bad ' +
+  'join, a type mismatch, a syntax error. Change as little as possible and keep ' +
+  'the user\'s intent.\n' +
+  'Set "fixedSql" to an EMPTY STRING when rewriting the SQL cannot fix the ' +
+  'failure — a lost or refused connection, a timeout, a permission denial, a ' +
+  'server that is down, an out-of-memory error. In that case still explain the ' +
+  'cause in "summary" and say what the user should do in an issue "suggestion". ' +
+  'Never invent a statement that would not address the reported error.'
+
+// System prompt for troubleshooting a failed PostgreSQL statement.
+export const TROUBLESHOOT_SYSTEM_PROMPT =
+  'You are a PostgreSQL expert. A user ran ONE statement and the server rejected ' +
+  'it. You are given the database schema (tables, columns, foreign keys), the ' +
+  'statement, and the exact error the driver returned. Diagnose why it failed and ' +
+  'fix it when the SQL is the problem.\n' +
+  'The error text is authoritative — trust it over your own reading of the ' +
+  'statement. Postgres often names the offending identifier and suggests a ' +
+  'replacement ("Perhaps you meant ..."); when it does, prefer that suggestion if ' +
+  'the schema confirms it. Use fully-qualified schema.table names in any fix.\n' +
+  TROUBLESHOOT_CONTRACT
+
+// System prompt for troubleshooting a failed DuckDB federated statement. Same
+// contract, different dialect and different naming rules.
+export const FEDERATED_TROUBLESHOOT_SYSTEM_PROMPT =
+  'You are a DuckDB expert. A user ran ONE federated query across several ' +
+  'attached PostgreSQL databases and DuckDB rejected it. You are given each ' +
+  'attached database (its alias, its underlying PostgreSQL database name, and its ' +
+  'schema with tables, columns, and foreign keys), the statement, and the exact ' +
+  'error DuckDB returned.\n' +
+  'Tables are referenced as alias.schema.table. An unqualified table name resolves ' +
+  'across the attached schemas, so qualify only when the same name exists in more ' +
+  'than one attached database. A "Catalog Error: Catalog X does not exist" means ' +
+  'the alias X is not attached — check the alias list before assuming the table is ' +
+  'wrong. A "Catalog Error: Table with name X does not exist" often carries a ' +
+  '"Did you mean" suggestion; prefer it when the schema confirms it. Foreign keys ' +
+  'never cross a database boundary, so cross-database joins are written explicitly ' +
+  'on matching columns.\n' +
+  'The error text is authoritative — trust it over your own reading of the query.\n' +
+  TROUBLESHOOT_CONTRACT
+
+export function buildTroubleshootUserMessage(
+  schema: string,
+  tables: SchemaTable[],
+  edges: ForeignKeyEdge[],
+  sql: string,
+  errorMessage: string
+): string {
+  return (
+    `Schema: ${schema}\n` +
+    `Tables:\n${serializeTables(schema, tables)}\n\n` +
+    `Foreign keys:\n${serializeForeignKeys(edges, schema)}\n\n` +
+    `Statement that failed:\n${sql}\n\n` +
+    `Error returned by PostgreSQL:\n${errorMessage}`
+  )
+}
+
+export function buildFederatedTroubleshootUserMessage(
+  contexts: FederatedSchemaContext[],
+  sql: string,
+  errorMessage: string
+): string {
+  const aliases = contexts.map((c) => c.alias).join(', ') || '(none)'
+  const blocks = contexts.map((c) => {
+    const prefix = `${c.alias}.${c.schema}`
+    const tableLines = c.tables
+      .map((t) => `- ${prefix}.${t.name}(${t.columns.map((col) => `${col.name} ${col.data_type}`).join(', ')})`)
+      .join('\n')
+    const origin = c.database ? ` — PostgreSQL database "${c.database}"` : ''
+    return (
+      `Database alias "${c.alias}"${origin} (reference tables as ${prefix}.<table>):\n` +
+      `Tables:\n${tableLines || '- (none)'}\n` +
+      `Foreign keys (within ${c.alias}):\n${serializeForeignKeys(c.edges, c.schema, c.alias)}`
+    )
+  })
+  return (
+    `Attached aliases: ${aliases}\n\n` +
+    `Attached databases:\n\n${blocks.join('\n\n')}\n\n` +
+    `Statement that failed:\n${sql}\n\n` +
+    `Error returned by DuckDB:\n${errorMessage}`
+  )
+}
+
 // System prompt for the "ask about a row" feature. Free-form Q&A grounded in the
 // schema and one result row; answers in prose, and only emits SQL when a query is
 // genuinely what answers the question.
@@ -223,11 +321,20 @@ export interface FederatedSchemaContext {
   schema: string
   tables: SchemaTable[]
   edges: ForeignKeyEdge[]
+  /** The underlying PostgreSQL database this alias was attached from. Only the
+   *  troubleshoot prompt sends it: when DuckDB reports `Catalog "x" does not
+   *  exist`, the model needs the alias-to-database mapping to tell a misspelled
+   *  alias apart from a genuinely missing attachment. Generation does not need
+   *  it — the alias alone is enough to write a fresh query. */
+  database?: string
 }
 
 export function buildFederatedUserMessageParts(
   contexts: FederatedSchemaContext[],
-  request: string
+  request: string,
+  // Existing query to refine. When set, the request is a follow-up edit to this
+  // SQL rather than a from-scratch generation.
+  baseSql?: string
 ): UserMessageParts {
   const blocks = contexts.map((c) => {
     const prefix = `${c.alias}.${c.schema}`
@@ -240,17 +347,29 @@ export function buildFederatedUserMessageParts(
       `Foreign keys (within ${c.alias}):\n${serializeForeignKeys(c.edges, c.schema, c.alias)}`
     )
   })
+  // Refine mode: hand the model the query it should edit and frame the request as
+  // a modification. It must return the FULL updated query, not a diff or snippet.
+  // Lives in the request tail, never in schemaContext — the prefix is cached.
+  const baseBlock = baseSql?.trim()
+    ? `Existing query to modify (return the FULL updated query, not a fragment):\n${baseSql.trim()}\n\n`
+    : ''
+  const requestLabel = baseBlock ? 'Change requested' : 'Request'
   return {
     schemaContext: `Attached databases:\n\n${blocks.join('\n\n')}\n\n`,
-    request: `Request: ${request}`
+    request: baseBlock + `${requestLabel}: ${request}`
   }
 }
 
 export function buildFederatedUserMessage(
   contexts: FederatedSchemaContext[],
-  request: string
+  request: string,
+  baseSql?: string
 ): string {
-  const { schemaContext, request: tail } = buildFederatedUserMessageParts(contexts, request)
+  const { schemaContext, request: tail } = buildFederatedUserMessageParts(
+    contexts,
+    request,
+    baseSql
+  )
   return schemaContext + tail
 }
 

@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerConnectionHandlers } from './ipc/connection-handlers'
 import { registerDbHandlers } from './ipc/db-handlers'
 import { registerAiHandlers } from './ipc/ai-handlers'
+import { migrateLegacyKey } from './db/settings-store'
 import { registerLinkedQueryHandlers } from './ipc/linked-query-handlers'
 import { registerFederatedHandlers } from './ipc/federated-handlers'
 import { registerScriptHandlers } from './ipc/script-handlers'
@@ -66,6 +67,10 @@ app.whenReady().then(() => {
   app.on('browser-window-created', (_, win) => {
     optimizer.watchWindowShortcuts(win)
   })
+
+  // Carry a key written by a pre-multi-provider build into the Anthropic slot
+  // before any handler reads settings. Idempotent, so a re-run is harmless.
+  migrateLegacyKey()
 
   registerConnectionHandlers()
   registerDbHandlers()

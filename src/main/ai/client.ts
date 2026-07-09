@@ -1,113 +1,100 @@
-import Anthropic from '@anthropic-ai/sdk'
-import type { AiCheckSqlResult, AiCheckSeverity } from '@shared/types'
-import type { UserMessageParts } from './prompt'
+import type { AiCheckSqlResult, AiCheckSeverity, AiTroubleshootResult } from '@shared/types'
+import { callModel, type AiTarget, type UserContent } from './providers'
 
-// Default model confirmed by the 2026-07-01 spike (docs/decisions/0008).
-// Upgraded from claude-sonnet-4-6 to Opus 4.8 for stronger intent-reading on
-// ambiguous / DML (insert-and-link) requests where Sonnet misinterpreted the
-// task. Sonnet remains a drop-in downgrade for lower cost/latency if needed.
-export const DEFAULT_MODEL = 'claude-opus-4-8'
-
-// The user message is either a plain string (no caching) or a split prefix/tail.
-// For the split form we mark the schema context with cache_control so repeated
-// calls against the same database reuse it as a cached prefix. Prompt caching is
-// prefix-match: the schema block only caches when it clears the model's minimum
-// cacheable prefix (~2048 tokens for Sonnet 4.6); smaller schemas silently pay
-// nothing and behave exactly as before. Concatenated, the two blocks are the
-// same content the model saw as one string.
-type UserContent = string | UserMessageParts
-
-function toMessageContent(input: UserContent): Anthropic.MessageParam['content'] {
-  if (typeof input === 'string') return input
-  return [
-    { type: 'text', text: input.schemaContext, cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: input.request }
-  ]
-}
+export type { AiTarget, UserContent }
+export { AiConfigError } from './providers'
 
 // Strip a ``` / ```sql fence if a model wraps the SQL despite the instruction not
-// to. Defensive — the spike output was already fence-free.
+// to. Defensive — and more load-bearing now that non-Claude models can answer,
+// since fencing habits differ across providers.
 function stripFences(text: string): string {
   const trimmed = text.trim()
   const fence = trimmed.match(/^```(?:sql)?\s*\n?([\s\S]*?)\n?```$/i)
   return (fence ? fence[1] : trimmed).trim()
 }
 
-// Call Claude in the main process only (the API key never reaches the renderer).
-export async function generateSqlFromClaude(
-  apiKey: string,
+/**
+ * Output-token cap for every AI call. `max_tokens` is a ceiling, not a
+ * reservation — an answer that ends early costs nothing extra — so there is no
+ * reason to keep separate, tighter caps per task. What stops us going higher is
+ * the transport, not the price:
+ *
+ * - Every call on this path is non-streaming (`messages.create` /
+ *   `chat.completions.create`). Anthropic's own guidance is that a request
+ *   above roughly 16K output tokens risks hitting the SDK's HTTP timeout before
+ *   the response completes. The models themselves go to 64K–128K, but only over
+ *   a streamed request.
+ * - `max_tokens` above a model's own output ceiling is a 400, not a clamp, and
+ *   that ceiling varies (Haiku 4.5 caps at 64K where Opus 4.8 reaches 128K).
+ *   An OpenAI-compatible server backed by a small local model can reject an
+ *   even lower value.
+ *
+ * 16000 is therefore the real maximum here. Raising it further means switching
+ * the adapters to streaming first.
+ */
+const MAX_OUTPUT_TOKENS = 16000
+
+// Every call below runs in the main process only — the API key never reaches
+// the renderer.
+
+export async function generateSql(
+  target: AiTarget,
   systemPrompt: string,
-  userMessage: UserContent,
-  model: string = DEFAULT_MODEL
+  userMessage: UserContent
 ): Promise<string> {
-  const client = new Anthropic({ apiKey })
-  const res = await client.messages.create({
-    model,
-    // Seed/INSERT scripts (e.g. "insert every scope") easily exceed a single
-    // SELECT's length; a low cap truncates the SQL mid-statement. Keep this
-    // generous so full multi-row statements come back intact.
-    max_tokens: 8192,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: toMessageContent(userMessage) }]
-  })
-  const text = res.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
+  // Seed/INSERT scripts (e.g. "insert every scope") easily exceed a single
+  // SELECT's length; a low cap truncates the SQL mid-statement.
+  const text = await callModel(target, systemPrompt, userMessage, MAX_OUTPUT_TOKENS)
   return stripFences(text)
 }
 
-// Free-form answer about one result row. Main process only (holds the API key).
-// Returns the raw text (fences kept) so the renderer can detect and offer to
-// insert an embedded ```sql suggestion. Never executes anything.
-export async function askAboutRowFromClaude(
-  apiKey: string,
+// Free-form answer about one result row. Returns the raw text (fences kept) so
+// the renderer can detect and offer to insert an embedded ```sql suggestion.
+// Never executes anything.
+export async function askAboutRow(
+  target: AiTarget,
   systemPrompt: string,
-  userMessage: UserContent,
-  model: string = DEFAULT_MODEL
+  userMessage: UserContent
 ): Promise<string> {
-  const client = new Anthropic({ apiKey })
-  const res = await client.messages.create({
-    model,
-    max_tokens: 1000,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: toMessageContent(userMessage) }]
-  })
-  return res.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-    .trim()
+  const text = await callModel(target, systemPrompt, userMessage, MAX_OUTPUT_TOKENS)
+  return text.trim()
 }
 
 const VALID_SEVERITIES: AiCheckSeverity[] = ['error', 'warning', 'info']
 
-// Ask Claude to review a query and return a structured result. Main process only
-// (the API key never reaches the renderer). Never executes the SQL.
-export async function checkSqlWithClaude(
-  apiKey: string,
+// Ask the model to review a query and return a structured result. Never executes
+// the SQL.
+export async function checkSql(
+  target: AiTarget,
   systemPrompt: string,
-  userMessage: string,
-  model: string = DEFAULT_MODEL
+  userMessage: string
 ): Promise<AiCheckSqlResult> {
-  const client = new Anthropic({ apiKey })
-  const res = await client.messages.create({
-    model,
-    max_tokens: 1500,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userMessage }]
-  })
-  const text = res.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
+  const text = await callModel(target, systemPrompt, userMessage, MAX_OUTPUT_TOKENS)
   return parseCheckResponse(text)
 }
 
-// Parse Claude's JSON review defensively: a model can still wrap it in a fence or
-// add stray prose, so we extract the outermost {...} block and coerce every field
-// into the AiCheckSqlResult shape rather than trusting it.
-function parseCheckResponse(text: string): AiCheckSqlResult {
+// Ask the model why a statement failed and, when the SQL itself is the cause, for
+// a corrected statement. The response shape is identical to a check's, so the
+// same defensive parser serves both — including the part that matters most here:
+// an empty or missing `fixedSql` survives as `undefined`, which is how the
+// renderer knows not to offer an Apply button. Never executes the SQL.
+export async function troubleshootSql(
+  target: AiTarget,
+  systemPrompt: string,
+  userMessage: string
+): Promise<AiTroubleshootResult> {
+  const text = await callModel(target, systemPrompt, userMessage, MAX_OUTPUT_TOKENS)
+  return parseCheckResponse(text)
+}
+
+// Parse the model's JSON review defensively: it can still wrap the JSON in a
+// fence or add stray prose, so we extract the outermost {...} block and coerce
+// every field into the AiCheckSqlResult shape rather than trusting it.
+//
+// Exported for tests. The `fixedSql` coercion below is load-bearing for the
+// troubleshoot feature: an empty string, whitespace, or a missing key all become
+// `undefined`, never `''`.
+export function parseCheckResponse(text: string): AiCheckSqlResult {
   const stripped = stripFences(text)
   const start = stripped.indexOf('{')
   const end = stripped.lastIndexOf('}')
@@ -117,7 +104,7 @@ function parseCheckResponse(text: string): AiCheckSqlResult {
     parsed = JSON.parse(json)
   } catch {
     // Unparseable — surface the raw text as the summary so the user still sees
-    // Claude's opinion instead of a hard failure.
+    // the model's opinion instead of a hard failure.
     return {
       ok: false,
       summary: text.trim().slice(0, 300) || 'Could not parse the review.',

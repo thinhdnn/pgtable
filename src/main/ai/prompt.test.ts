@@ -111,6 +111,35 @@ describe('user-message parts (cacheable prefix split)', () => {
     expect(parts.schemaContext).not.toContain('orders per customer')
     expect(parts.request).toBe('Request: orders per customer')
   })
+
+  it('federated refine: the base query rides the tail, never the cached prefix', () => {
+    const contexts: FederatedSchemaContext[] = [
+      { alias: 'db1', schema: 'public', tables, edges }
+    ]
+    const base = 'SELECT * FROM db1.public.users;'
+    const parts = buildFederatedUserMessageParts(contexts, 'only active users', base)
+    expect(parts.schemaContext + parts.request).toBe(
+      buildFederatedUserMessage(contexts, 'only active users', base)
+    )
+    // The refine base is per-call. Leaking it into schemaContext would break the
+    // cached prefix for every later call against the same attachments.
+    expect(parts.schemaContext).not.toContain(base)
+    expect(parts.schemaContext).not.toContain('Existing query to modify')
+    expect(parts.request).toContain(base)
+  })
+
+  it('federated: an absent base query leaves the prefix AND the tail untouched', () => {
+    const contexts: FederatedSchemaContext[] = [
+      { alias: 'db1', schema: 'public', tables, edges }
+    ]
+    // The generate path predates refine. Adding the optional baseSql must not
+    // shift a single byte of the prompt it already sends.
+    for (const absent of [undefined, '', '   \n  ']) {
+      expect(buildFederatedUserMessageParts(contexts, 'orders per customer', absent)).toEqual(
+        buildFederatedUserMessageParts(contexts, 'orders per customer')
+      )
+    }
+  })
 })
 
 describe('buildAskRowMessage', () => {
@@ -209,5 +238,27 @@ describe('buildFederatedUserMessage', () => {
     // FK is rendered with the owning database's alias on both ends.
     expect(msg).toContain('sales.public.orders.customer_id -> sales.public.customers.id')
     expect(msg).toContain('Request: orders per customer')
+  })
+
+  it('frames a from-scratch request without a base query', () => {
+    const contexts: FederatedSchemaContext[] = [
+      { alias: 'db1', schema: 'public', tables: [], edges: [] }
+    ]
+    const msg = buildFederatedUserMessage(contexts, 'orders per customer')
+    expect(msg).toContain('Request: orders per customer')
+    expect(msg).not.toContain('Existing query to modify')
+    expect(msg).not.toContain('Change requested')
+  })
+
+  it('frames a refine request with the base query and asks for the full result', () => {
+    const contexts: FederatedSchemaContext[] = [
+      { alias: 'db1', schema: 'public', tables: [], edges: [] }
+    ]
+    const base = 'SELECT * FROM db1.public.orders;'
+    const msg = buildFederatedUserMessage(contexts, 'only the last 30 days', base)
+    expect(msg).toContain('Existing query to modify')
+    expect(msg).toContain(base)
+    expect(msg).toContain('return the FULL updated query')
+    expect(msg).toContain('Change requested: only the last 30 days')
   })
 })
