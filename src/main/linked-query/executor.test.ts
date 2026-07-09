@@ -10,6 +10,18 @@ import {
   MAX_KEY_VALUES,
   type UpstreamResults
 } from './executor'
+import { LINKED_STEP_ROW_LIMIT } from '@shared/linked-query'
+import { isNonMutatingStatement } from '@shared/sql-statement'
+
+describe('MAX_KEY_VALUES', () => {
+  // The keyset bound and the per-step row cap must stay equal: a step's rows
+  // feed the next step's IN-list, so a cap below the bound would silently drop
+  // downstream keys, and a cap above it would let a step produce a keyset the
+  // rewriter then rejects. Either drift is a bug.
+  it('equals LINKED_STEP_ROW_LIMIT', () => {
+    expect(MAX_KEY_VALUES).toBe(LINKED_STEP_ROW_LIMIT)
+  })
+})
 
 describe('isReadOnlyStatement', () => {
   it('accepts SELECT and WITH', () => {
@@ -33,6 +45,34 @@ describe('isReadOnlyStatement', () => {
     expect(isReadOnlyStatement('-- DELETE FROM x\nSELECT 1')).toBe(true)
     expect(isReadOnlyStatement("SELECT 'INSERT'")).toBe(true)
     expect(isReadOnlyStatement("/* UPDATE */ SELECT 1")).toBe(true)
+  })
+})
+
+// These two functions look like duplicates and are not. `isReadOnlyStatement` is
+// the *execution guard* (what the linked-query and DuckDB runners will let run,
+// narrowed per C1). `isNonMutatingStatement` is the *warning classifier* (does
+// this AI-authored statement change data?). TABLE and VALUES read data, so the
+// classifier accepts them while the guard still refuses to run them.
+//
+// Collapsing the two would either widen the guard duck-runner.ts depends on, or
+// make the editor warn about harmless reads. This test fails if anyone tries.
+describe('read-only guard vs non-mutating classifier', () => {
+  it('diverge on TABLE and VALUES, on purpose', () => {
+    for (const sql of ['TABLE t', 'VALUES (1)']) {
+      expect(isReadOnlyStatement(sql)).toBe(false)
+      expect(isNonMutatingStatement(sql)).toBe(true)
+    }
+  })
+
+  it('agree everywhere else that matters', () => {
+    for (const sql of ['SELECT 1', 'WITH cte AS (SELECT 1) SELECT * FROM cte']) {
+      expect(isReadOnlyStatement(sql)).toBe(true)
+      expect(isNonMutatingStatement(sql)).toBe(true)
+    }
+    for (const sql of ['INSERT INTO t VALUES (1)', 'UPDATE t SET x = 1', 'DROP TABLE t']) {
+      expect(isReadOnlyStatement(sql)).toBe(false)
+      expect(isNonMutatingStatement(sql)).toBe(false)
+    }
   })
 })
 

@@ -15,6 +15,8 @@ export type {
   LinkedUpstreamResults
 } from '@shared/types'
 
+import { stripCommentsAndStrings } from '@shared/sql-statement'
+
 /** Discriminator codes for LinkedRewriteError so handlers can map to user copy
  * without string-matching messages. */
 export type LinkedRewriteCode =
@@ -32,63 +34,20 @@ export class LinkedRewriteError extends Error {
   }
 }
 
-// Replaces line/block comments and string bodies with spaces of the same
-// length so byte offsets stay aligned with the original SQL. That alignment
-// is what lets `rewritePlaceholder` scan the sanitised copy for tokens and
-// then splice into the *original* text (constraint C2).
-export function stripCommentsAndStrings(sql: string): string {
-  let out = ''
-  let i = 0
-  while (i < sql.length) {
-    const ch = sql[i]
-    const next = sql[i + 1]
-    if (ch === '-' && next === '-') {
-      const start = i
-      while (i < sql.length && sql[i] !== '\n') i++
-      out += ' '.repeat(i - start)
-      continue
-    }
-    if (ch === '/' && next === '*') {
-      const start = i
-      i += 2
-      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++
-      if (i < sql.length) i += 2
-      out += ' '.repeat(i - start)
-      continue
-    }
-    if (ch === "'") {
-      const start = i
-      i++
-      while (i < sql.length) {
-        if (sql[i] === "'" && sql[i + 1] === "'") { i += 2; continue }
-        if (sql[i] === "'") { i++; break }
-        i++
-      }
-      out += ' '.repeat(i - start)
-      continue
-    }
-    if (ch === '$') {
-      const m = sql.slice(i).match(/^\$([A-Za-z_][A-Za-z0-9_]*)?\$/)
-      if (m) {
-        const start = i
-        const tag = m[0]
-        i += tag.length
-        const end = sql.indexOf(tag, i)
-        i = end === -1 ? sql.length : end + tag.length
-        out += ' '.repeat(i - start)
-        continue
-      }
-    }
-    out += ch
-    i++
-  }
-  return out
-}
+// The sanitiser now lives in `@shared/sql-statement` so the renderer can use it
+// too. Re-exported here because `executor.test.ts` and the rewriter below have
+// always reached for it under this name.
+export { stripCommentsAndStrings }
 
 // Read-only guard for Step SQL. Narrowed to SELECT / WITH per constraint C1 —
 // TABLE and VALUES are legal on their own but rare in this feature and
 // broaden the accept surface without benefit. Strips comments/strings first
 // so a keyword hidden in text can't fool the classifier.
+//
+// NOT the same as `isNonMutatingStatement` in `@shared/sql-statement`, which
+// accepts TABLE/VALUES because they read data. That one decides whether to warn
+// a user; this one decides what the runner will execute at all. Widening this to
+// match it would loosen the guard `duck-runner.ts` depends on.
 export function isReadOnlyStatement(sql: string): boolean {
   const sanitized = stripCommentsAndStrings(sql.replace(/;\s*$/, '').trim()).trim()
   return /^(SELECT|WITH)\b/i.test(sanitized)
