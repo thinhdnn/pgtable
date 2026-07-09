@@ -136,6 +136,7 @@ jobs:
           # Via env, never interpolated into the script body: `inputs.tag` is
           # attacker-controlled text and `${{ }}` would splice it into bash.
           INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ -n "${INPUT_TAG}" ]]; then
             tag="${INPUT_TAG}"
@@ -145,15 +146,28 @@ jobs:
             tag="v$(node -p "require('./package.json').version")"
           fi
           echo "tag=${tag}" >>"$GITHUB_OUTPUT"
+          # Publishing a draft created by a manual run creates its tag, which
+          # fires this workflow again on `push: tags`. Never rewrite a release
+          # that is already published -- re-uploading assets and overwriting the
+          # body of a live release is destructive.
+          if [[ "$(gh release view "${tag}" --json isDraft -q .isDraft 2>/dev/null)" == "false" ]]; then
+            echo "::notice::${tag} is already published; leaving it untouched"
+            echo "skip=true" >>"$GITHUB_OUTPUT"
+          fi
           # The VT job may have been skipped; body_path must still point at a file.
           [[ -f artifacts/vt-report.md ]] || echo "_VirusTotal scan skipped._" >artifacts/vt-report.md
           echo "Releasing as ${tag}"
 
       - uses: softprops/action-gh-release@v2
+        if: steps.meta.outputs.skip != 'true'
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           target_commitish: ${{ github.sha }}
           files: artifacts/pgtable-*
           body_path: artifacts/vt-report.md
-          draft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
+          # Only a manual run may request a draft. This used to be
+          # `event_name != 'workflow_dispatch' || inputs.draft`, which evaluated
+          # to true on a tag push and would flip an already-published release
+          # back to draft.
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
           generate_release_notes: true
