@@ -1,35 +1,79 @@
 {
   "schema_version": "1.1",
-  "feature_slug": "save-federated-query",
+  "feature_slug": "refine-federated-sql",
   "mode": "standard_feature",
-  "active_skill": "swarming",
-  "phase": "execution-complete",
+  "active_skill": "executing",
+  "phase": "execution-complete-pending-uat",
   "phase_number": 4,
-  "epic_id": "",
-  "current_work": "S-1",
+  "epic_id": "E05",
+  "current_work": "US-024 (harness story US-024)",
   "approved_gates": {
     "context": true,
     "work_shape": true,
-    "phase_plan": true,
-    "execution": true,
+    "phase_plan": false,
+    "execution": false,
     "review": false
   },
   "active_beads": [],
   "active_workers": [],
-  "blockers": [],
-  "summary": "S-1 executed inline (degraded-mode swarming: no .beads/, 7 tightly-coupled files, no fan-out benefit). T-1..T-6 shipped: SavedFederatedQuery/Input + SavedFederatedAttachment types (alias omitted, derived); FEDERATED_SCRIPT_LIST/SAVE/DELETE channels; src/main/db/federated-script-store.ts (lazy electron-store 'pgtable-federated-scripts' + pure upsertFederatedQueries, D4 unique-name/overwrite); federated-script-store.test.ts (6 tests); src/main/ipc/federated-script-handlers.ts (NAME_EXISTS on collision); registered in index.ts; FederatedQueryTab.tsx Save button + Save modal (overwrite/rename) + Saved drawer (search list Open/Delete) + best-effort Open hydration with missing/disconnected row flags (D3) + dirty-confirm on Open (D5). Proof bar GREEN: typecheck exit 0, test 67/67 (was 61), build exit 0. Runtime UAT (launch app, Save/Open/Delete, restart-persist, deleted-connection missing flag) NOT yet done — belongs to reviewing.",
-  "next_action": "Invoke khuym:reviewing for 4-role review + runtime UAT of save-federated-query S-1.",
+  "blockers": [
+    "Runtime UAT owed for US-024: launch the app, attach >=1 database, select SQL in the federated editor, press Ask AI, confirm the modal says \"Refine selected SQL with AI\", the returned SQL replaces ONLY the selection, undo (Cmd-Z) restores the pre-refine text in one step, and a non-SELECT result still raises the genWarning banner.",
+    "US-024 sends a live prompt to the configured provider; no agent-side live call was made. The refine block wording is copied verbatim from the shipped QueryEditor path, so provider behaviour is inherited, not new — but unobserved on the federated prompt."
+  ],
+  "summary": "US-024 IMPLEMENTED. Lane normal, scope narrowed by the user against the external-provider hard gate. Proof bar GREEN (agent-measured): typecheck exit 0, vitest 146/146 across 14 files (+4 federated refine tests), build exit 0. FederatedQueryTab gained the selection-refine mode QueryEditor already had. Shipped: buildFederatedUserMessageParts/buildFederatedUserMessage take an optional baseSql and emit the same \"Existing query to modify (return the FULL updated query, not a fragment)\" block + \"Change requested:\" label as buildUserMessageParts; AiGenerateFederatedSqlPayload gains optional baseSql; the AI_GENERATE_FEDERATED_SQL handler threads it through; FederatedQueryTab grew aiBaseSql state + aiSelRef + openAiModal, dispatching the result into the selected range through the live EditorView so undo history survives, falling back to setSql when there is no selection. NO new IPC channel — one channel carries both modes, exactly as AI_GENERATE_SQL does. Key invariant, pinned by test rather than asserted: when baseSql is absent/empty/whitespace the federated prompt is byte-for-byte what it was, so the shipped generate path cannot regress; and the base block lives ONLY in the request tail, never in schemaContext, because schemaContext is the cached prefix (client.ts). The base-SQL preview uses the theme-neutral rgba(127,127,127,0.12) of TroubleshootPanel rather than antd token lookups, since FederatedQueryTab has no useToken() and ADR 0011 discourages fresh inline token styling. PREVIOUS FEATURE PARKED: troubleshoot-sql-error (US-020) is still execution-complete-pending-uat with its three blockers preserved under parked_features.",
+  "next_action": "Runtime UAT of US-024 by the user (see blockers). Then clear the parked troubleshoot-sql-error feature: its own UAT, docs/decisions/0012-ai-troubleshoot-sql-channel.md, and LinkedQueryTab troubleshoot — which must now be US-025, NOT US-024. Finally khuym:compounding, which has not run since ai-sql-generation on 2026-07-01 and now has five features uncaptured.",
   "focus": "src/renderer/src/components/federated/FederatedQueryTab.tsx",
+  "planning_notes": [
+    "Mode: high_risk_feature. 5 intake flags (external systems, public contracts, existing behavior, weak proof, multi-domain) + the External-provider hard gate. Precedent: US-018 is the one AI story shipped as a high-risk story folder.",
+    "Q1 ANSWERED: LinkedQueryTab needs no schema picker. SCHEMA_INTROSPECT (db-handlers.ts:661-700) already returns every non-system schema for a database, tagged per table, capped LIMIT 5000. Plan adds a main-side fetchDatabaseSchema() mirroring that filter+cap and adding data_type + FK edges.",
+    "Q2 ANSWERED: one new channel ai:troubleshoot-sql with a discriminated payload. Extending ai:check-sql is wrong (its payload has no federated/linked variant; it is a pre-run review with no error to reason about). parseCheckResponse() (client.ts:78-125) is reusable verbatim and already makes fixedSql optional, which satisfies D4 for free.",
+    "Q3 ANSWERED: no input token ceiling exists to copy. fetchSchemaTables()/fetchForeignKeys() have no LIMIT, so ai:generate-federated-sql is ALREADY unbounded on shipped code. Troubleshoot inherits, does not worsen. Capping is deferred as separate work.",
+    "HIGH RISK FOUND: FederatedQueryTab and LinkedQueryTab have NO non-SELECT warning today (only QueryEditor does). An Apply button there could land an AI-authored DELETE silently. Safety rule: no surface gets Apply in a story that does not also give it the warning.",
+    "CORRECTED BY VALIDATING: the earlier planning claim that isReadOnlyStatement is a duplicate safe to unify was WRONG. executor.ts:92 is ^(SELECT|WITH) — a narrow C1 EXECUTION GUARD used by duck-runner.ts; QueryEditor.tsx:148 is ^(SELECT|WITH|TABLE|VALUES) — a broad WARNING CLASSIFIER. executor.test.ts pins isReadOnlyStatement('TABLE t') === false. Unifying on the broad regex would widen the read-only guard; on the narrow one it would emit false warnings. Repair: src/shared/sql-statement.ts gets stripCommentsAndStrings + a NEW isNonMutatingStatement (broad); isReadOnlyStatement STAYS in executor.ts unrenamed. A mutation-checked test must pin the two apart.",
+    "CORRECTED BY VALIDATING: the comment 'Copied from QueryEditor.tsx and kept in sync' sits above applyAutoLimit (executor.ts:97-100), NOT isReadOnlyStatement. The applyAutoLimit copies ARE byte-identical; deduplicating them is unrelated scope and was not added to US-020.",
+    "CONSTRAINT FROM VALIDATING: parseCheckResponse must gain an `export` keyword before the A1 unit test in validation.md can exist at all.",
+    "PROOF BAR: typecheck + test + build ONLY. npm run lint is declared in package.json but eslint is NOT installed (re-verified this session). Naming lint would repeat the exact failure recorded in critical-patterns.md.",
+    "Decision record required before implementation; next free integer must be checked, not assumed (docs/decisions/ has two 0006-* and two 0007-* files).",
+    "ID COLLISION CORRECTED: US-020 evidence text says \"LinkedQueryTab deferred to US-024\". US-024 was free in the matrix and is now taken by federated AI refine. LinkedQueryTab troubleshoot moves to US-025. The stale sentence survives inside US-020 evidence; harness-cli story update exposes no --notes, and rewriting the whole evidence string to fix one clause was judged worse than recording the correction here.",
+    "US-024 reused AI_GENERATE_FEDERATED_SQL rather than adding a channel, following the AI_GENERATE_SQL precedent where one channel carries both generate and refine via an optional baseSql. No decision record was written: the channel, the payload direction, and the refine wording all already existed; only the federated surface was missing.",
+    "US-024 did NOT touch LinkedQueryTab. Each linked-query step hosts its own SqlEditor and would need the same aiSelRef treatment per step — separate scope."
+  ],
   "deferred_beads": [],
   "parked_features": [
     {
+      "feature_slug": "troubleshoot-sql-error",
+      "harness_story": "US-020",
+      "phase": "execution-complete-pending-uat",
+      "parked_at": "2026-07-09",
+      "parked_reason": "User chose to implement federated AI refine first and leave troubleshoot pending UAT.",
+      "blockers": [
+        "A2 STILL UNPROVEN (was a blocking spike; user chose to implement first): does a real provider return parseable JSON when the user message carries a raw multi-line Postgres/DuckDB error? Mitigated, not answered: parseCheckResponse degrades to { ok:false, summary:<raw text> } on unparseable prose rather than throwing, so the worst case is a diagnosis with no fix — never a crash. First real click is the test.",
+        "A3 STILL UNPROVEN: does a connection error yield a response with NO fixedSql? The PARSER side is now proven by client.test.ts (empty/whitespace/missing all become undefined). What is unproven is the MODEL side: whether it obeys the prompt's 'set fixedSql to an empty string' instruction for a connection failure. If it invents a fix, the Apply button appears where it should not.",
+        "Runtime UAT owed: launch the app, fail a query in both QueryEditor and Federated, click Troubleshoot, confirm Apply writes to the editor and does NOT run, and confirm a non-SELECT fix raises the warning."
+      ],
+      "resume_with": "Runtime UAT (QueryEditor + FederatedQueryTab error alert -> Troubleshoot -> Apply), then docs/decisions/0012-ai-troubleshoot-sql-channel.md, then LinkedQueryTab troubleshoot as US-025."
+    }
+  ],
+  "closed_features": [
+    {
       "feature_slug": "save-sql-script",
-      "phase": "execution-complete",
-      "active_skill": "reviewing",
-      "next_action": "Invoke khuym:reviewing for 4-role review + runtime UAT of save-sql-script S-1 (launch app, Save/Open/Delete, restart-persist). Review gate not approved.",
-      "focus": "src/renderer/src/components/query/QueryEditor.tsx",
-      "parked_at": "2026-07-05",
-      "reason": "User chose to start save-federated-query before closing save-sql-script's review/UAT."
+      "harness_story": "US-021",
+      "phase": "review-approved",
+      "closed_at": "2026-07-09",
+      "review_gate": "approved by user",
+      "uat": "attested by user on 2026-07-09; NOT observed by the agent",
+      "proof_bar": "measured by agent 2026-07-09: typecheck exit 0, test 114/114 (11 files), build exit 0",
+      "notes": "Registered retroactively as US-021 — it shipped with no harness intake row. khuym:reviewing (4-role review) was never run; the user passed the gate directly, same precedent as linked-query on 2026-07-02. khuym:compounding has NOT run for this feature."
+    },
+    {
+      "feature_slug": "save-federated-query",
+      "harness_story": "US-022",
+      "phase": "review-approved",
+      "closed_at": "2026-07-09",
+      "review_gate": "approved by user",
+      "uat": "attested by user on 2026-07-09; NOT observed by the agent",
+      "proof_bar": "measured by agent 2026-07-09: typecheck exit 0, test 114/114 (11 files), build exit 0",
+      "notes": "Registered retroactively as US-022 — it shipped with no harness intake row. khuym:reviewing (4-role review) was never run; the user passed the gate directly. khuym:compounding has NOT run for this feature."
     }
   ],
   "last_compounding_run": {
@@ -38,11 +82,14 @@
     "learnings_file": "history/learnings/20260701-ai-sql-generation.md",
     "critical_promotions": 3
   },
-  "last_updated": "2026-07-05T00:00:00.000Z",
-  "updated_at": "2026-07-05T00:00:00.000Z",
+  "last_updated": "2026-07-09",
+  "updated_at": "2026-07-09",
   "notes": [
     "linked-query: shipped full epic; user passed the review gate manually (2026-07-02).",
-    "save-sql-script: execution complete, PARKED at reviewing (see parked_features) — runtime UAT still owed.",
-    "save-federated-query: exploring complete, CONTEXT.md locked D1-D5."
+    "save-sql-script: CLOSED 2026-07-09 as US-021. User attested UAT and passed the review gate.",
+    "save-federated-query: CLOSED 2026-07-09 as US-022. User attested UAT and passed the review gate.",
+    "troubleshoot-sql-error: exploring + planning done; validating returned NOT READY - RUN SPIKE (A2, A3 need live provider calls).",
+    "REVIEW DEBT CLEARED. Residual: neither closed feature went through khuym:reviewing (no 4-role review, no artifact verification), and khuym:compounding has not run since ai-sql-generation (2026-07-01). Three features' learnings are uncaptured.",
+    "US id allocation: US-021/US-022 were taken by the retro-registered save-* features, so the troubleshoot follow-ups are US-023 (federated) and US-024 (linked). Docs updated accordingly."
   ]
 }
