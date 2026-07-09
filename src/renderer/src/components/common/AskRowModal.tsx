@@ -89,7 +89,7 @@ export function AskRowModal({
       })
       if ('error' in res) {
         if (res.error === 'NO_API_KEY') {
-          setError('No Claude API key configured. Add one in Settings.')
+          setError('No AI provider configured. Add an API key in Settings.')
           onNeedApiKey?.()
         } else {
           setError(res.error)
@@ -103,6 +103,9 @@ export function AskRowModal({
       setLoading(false)
     }
   }, [question, row, loading, columns, connectionId, database, schema, sourceTable, onNeedApiKey])
+
+  // Re-stringifying the row on every keystroke in the question box is pure waste.
+  const rowJson = useMemo(() => (row ? orderedRowJson(columns, row) : null), [columns, row])
 
   // Pull a single ```sql block out of the answer so we can offer to use it.
   const answerSql = useMemo(() => {
@@ -138,7 +141,7 @@ export function AskRowModal({
         <Alert
           type="warning"
           showIcon
-          message="This sends the row's actual values to Claude"
+          message="This sends the row's actual values to your AI provider"
           description="Unlike the other AI features, this leaves your machine. Review the data below before sending."
         />
         {row && (
@@ -146,7 +149,7 @@ export function AskRowModal({
             <Text type="secondary" style={{ fontSize: 12 }}>
               Row that will be sent:
             </Text>
-            <pre style={{ ...preStyle, maxHeight: 180 }}>{orderedRowJson(columns, row)}</pre>
+            <pre style={{ ...preStyle, maxHeight: 180 }}>{rowJson}</pre>
           </div>
         )}
         <Input.TextArea

@@ -3,6 +3,7 @@ import { IPC } from '@shared/ipc-channels'
 import type { LinkedStepRunPayload, LinkedStepRunOutcome } from '@shared/types'
 import { getConnection } from '../db/connection-store'
 import { getOrCreatePool, isConnected } from '../pg/pool-manager'
+import { LINKED_STEP_ROW_LIMIT } from '@shared/linked-query'
 import {
   isReadOnlyStatement,
   applyAutoLimit,
@@ -10,12 +11,6 @@ import {
   LinkedRewriteError,
   type RewriteResult
 } from '../linked-query/executor'
-
-/** Row cap on any step's result. A step's rows can feed the next step's IN-list,
- * so the cap aligns with MAX_KEY_VALUES (5000) rather than a smaller preview
- * limit — truncating below that would silently drop downstream keys. Users can
- * override by writing their own LIMIT. */
-const STEP_ROW_LIMIT = 5000
 
 function requirePool(connectionId: string, database: string) {
   const conn = getConnection(connectionId)
@@ -33,7 +28,7 @@ export function registerLinkedQueryHandlers(): void {
     IPC.LINKED_STEP_RUN,
     async (
       _e,
-      { connectionId, database, sql, stepIndex, upstream }: LinkedStepRunPayload
+      { connectionId, database, sql, stepIndex, upstream, autoLimit }: LinkedStepRunPayload
     ): Promise<LinkedStepRunOutcome | { error: string }> => {
       try {
         if (!sql.trim()) return { error: `Step ${stepIndex} SQL is empty` }
@@ -66,7 +61,15 @@ export function registerLinkedQueryHandlers(): void {
           return { skipped: true, reason: 'EMPTY_KEYSET' }
         }
 
-        const { sql: capped, appended } = applyAutoLimit(rewritten.sql, STEP_ROW_LIMIT)
+        // Per-step safety net. Off means "return every row" — it does not lift
+        // MAX_KEY_VALUES: rewritePlaceholders() above already bounded whatever
+        // keyset this step's placeholders consumed, so an oversized upstream
+        // fails loudly with TOO_MANY_KEYS instead of running on truncated keys.
+        // A payload missing the field is an older caller — give it the net.
+        const armed = autoLimit ?? true
+        const { sql: capped, appended } = armed
+          ? applyAutoLimit(rewritten.sql, LINKED_STEP_ROW_LIMIT)
+          : { sql: rewritten.sql, appended: false }
 
         const pool = requirePool(connectionId, database)
         const started = Date.now()

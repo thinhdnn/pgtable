@@ -1,6 +1,14 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Collapse, Select, Space, Tag, Typography, theme } from 'antd'
-import { PlayCircleOutlined, LinkOutlined, PlusOutlined, MinusOutlined } from '@ant-design/icons'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactCodeMirrorRef } from '@uiw/react-codemirror'
+import { keymap } from '@codemirror/view'
+import { Prec } from '@codemirror/state'
+import { Alert, Button, Collapse, Select, Space, Tag, Tooltip, Typography, message, theme } from 'antd'
+import {
+  PlayCircleOutlined,
+  PlusOutlined,
+  DeleteOutlined,
+  AlignLeftOutlined
+} from '@ant-design/icons'
 import type {
   LinkedQueryTab as LinkedQueryTabModel,
   LinkedStepRunResult,
@@ -9,6 +17,7 @@ import type {
   Connection
 } from '@shared/types'
 import { IPC } from '@shared/ipc-channels'
+import { LINKED_STEP_ROW_LIMIT, feedsLaterStep } from '@shared/linked-query'
 import { invoke } from '../../api'
 import { useConnections } from '../../hooks/useConnections'
 import { useDatabases, useSchemas, useTables } from '../../hooks/useDatabases'
@@ -18,6 +27,7 @@ import { type SchemaPayload } from '../../utils/sql-completion'
 import { buildSelectSql } from '../../utils/sql-builders'
 import { SqlEditor } from '../common/SqlEditor'
 import { QueryResultTable } from '../common/QueryResultTable'
+import { formatSqlInView } from '../../utils/format-sql'
 
 const { Text } = Typography
 
@@ -36,6 +46,9 @@ interface StepState {
   skipped: boolean
   error: string | null
   running: boolean
+  /** Per-step auto-LIMIT safety net, on by default. Off returns every row. It
+   * never lifts the keyset bound a later step's placeholder imposes. */
+  autoLimit: boolean
 }
 
 const STEP1_STARTER = '-- Step 1: SELECT the key column you want to push down\nSELECT id FROM users;'
@@ -58,7 +71,8 @@ function emptyStep(sql: string): StepState {
     result: null,
     skipped: false,
     error: null,
-    running: false
+    running: false,
+    autoLimit: true
   }
 }
 
@@ -93,7 +107,10 @@ function useIntrospectSchema(
   return schema
 }
 
-export function LinkedQueryTab({ tab }: Props) {
+// The tab bar already renders `tab.title`, so the pane itself never reads the
+// model — repeating the title inside the pane is what made this tab look unlike
+// the query and table tabs.
+export function LinkedQueryTab(_props: Props) {
   const { token } = theme.useToken()
   const { data: connections = [] } = useConnections()
   const { connectionStates } = useActiveConnection()
@@ -165,7 +182,8 @@ export function LinkedQueryTab({ tab }: Props) {
         database: step.database,
         sql: step.sql,
         stepIndex: i + 1,
-        upstream
+        upstream,
+        autoLimit: step.autoLimit
       })
       if ('error' in res) {
         patchStep(i, { result: null, skipped: false, error: res.error, running: false })
@@ -195,20 +213,33 @@ export function LinkedQueryTab({ tab }: Props) {
 
   const items = steps.map((step, i) => {
     const enabled = stepEnabled(i)
+    const runnable = enabled && !!step.connectionId && !!step.database && !step.running
     return {
       key: String(i),
       label: <StepHeader index={i} step={step} enabled={enabled} />,
       extra: (
-        <Button
-          type="primary"
-          size="small"
-          icon={<PlayCircleOutlined />}
-          loading={step.running}
-          disabled={!enabled || !step.connectionId || !step.database}
-          onClick={() => runStep(i)}
-        >
-          Run Step {i + 1}
-        </Button>
+        <Space size={8}>
+          <LimitTag
+            autoLimit={step.autoLimit}
+            keysFeedLaterStep={feedsLaterStep(
+              steps.slice(i + 1).map((s) => s.sql),
+              i + 1
+            )}
+            onToggle={() => patchStep(i, { autoLimit: !step.autoLimit })}
+          />
+          <Tooltip title={`Run step ${i + 1} (⌘/Ctrl + Enter from its editor).`}>
+            <Button
+              type="primary"
+              size="small"
+              icon={<PlayCircleOutlined />}
+              loading={step.running}
+              disabled={!enabled || !step.connectionId || !step.database}
+              onClick={() => runStep(i)}
+            >
+              Run Step {i + 1}
+            </Button>
+          </Tooltip>
+        </Space>
       ),
       style: { background: token.colorFillQuaternary },
       children: (
@@ -217,7 +248,9 @@ export function LinkedQueryTab({ tab }: Props) {
           step={step}
           steps={steps}
           enabled={enabled}
+          runnable={runnable}
           connOptions={connOptions}
+          onRun={() => runStep(i)}
           onPatch={(patch) => patchStep(i, patch)}
           onScopeInvalidate={() => clearDownstream(i)}
         />
@@ -226,40 +259,92 @@ export function LinkedQueryTab({ tab }: Props) {
   })
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden', padding: 16 }}>
-      <Space direction="vertical" size={12} style={{ width: '100%', minWidth: 0 }}>
-        <Space align="center" wrap>
-          <LinkOutlined style={{ color: token.colorPrimary }} />
-          <Text strong>{tab.title}</Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            Chain SELECTs across databases: each step pushes its keys into a later
-            step&apos;s WHERE IN. Placeholder: <code>:stepN.&lt;column&gt;</code>.
-          </Text>
-        </Space>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div className="pg-toolbar">
+        <Tooltip title="Append a step that can reference every earlier step's keys">
+          <Button size="small" icon={<PlusOutlined />} onClick={addStep}>
+            Add step
+          </Button>
+        </Tooltip>
+        <Tooltip title="Drop the last step. Earlier :stepN numbering stays stable.">
+          <Button
+            size="small"
+            icon={<DeleteOutlined />}
+            disabled={steps.length <= 1}
+            onClick={removeLastStep}
+          >
+            Remove last step
+          </Button>
+        </Tooltip>
+        <Text type="secondary" className="tabular" style={{ fontSize: 12 }}>
+          {steps.length} step{steps.length === 1 ? '' : 's'}
+        </Text>
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: 12 }}>
+        <Text type="secondary" className="pg-hint" style={{ display: 'block', fontSize: 12 }}>
+          Chain SELECTs across databases: each step pushes its keys into a later step&apos;s WHERE
+          IN. Placeholder: <code>:stepN.&lt;column&gt;</code>.
+        </Text>
 
         {/* `collapsible="header"` keeps the Run button in `extra` from toggling
             the panel; only the header text expands/collapses. */}
         <Collapse
+          style={{ marginTop: 12 }}
           collapsible="header"
           activeKey={activeKeys}
           onChange={(keys) => setActiveKeys(keys as string[])}
           items={items}
         />
-
-        <Space>
-          <Button icon={<PlusOutlined />} onClick={addStep}>
-            Add step
-          </Button>
-          <Button icon={<MinusOutlined />} disabled={steps.length <= 1} onClick={removeLastStep}>
-            Remove last step
-          </Button>
-        </Space>
-      </Space>
+      </div>
     </div>
   )
 }
 
 const PAGE_SIZE = 25
+
+// Height of a step's editor + result row. Fixed rather than content-driven so a
+// long statement scrolls inside the editor (see .pg-sql-editor in styles.css).
+const STEP_EDITOR_HEIGHT = 320
+
+// Module-level so the identities never change: @uiw/react-codemirror rebuilds
+// the whole extension tree whenever the `basicSetup` prop changes identity.
+const STEP_BASIC_SETUP = { foldGutter: true }
+const STEP_EDITOR_STYLE: React.CSSProperties = { width: '100%', height: '100%' }
+
+// Per-step auto-LIMIT toggle, mirroring the tag in QueryEditor and
+// FederatedQueryTab. `keysFeedLaterStep` changes only the copy: turning the net
+// off still leaves the keyset this step hands downstream bounded by
+// MAX_KEY_VALUES, and the later step fails with TOO_MANY_KEYS past it.
+function LimitTag({
+  autoLimit,
+  keysFeedLaterStep,
+  onToggle
+}: {
+  autoLimit: boolean
+  keysFeedLaterStep: boolean
+  onToggle: () => void
+}) {
+  const title = autoLimit
+    ? `Bare SELECTs run with LIMIT ${LINKED_STEP_ROW_LIMIT}. Click to run with no row cap.`
+    : keysFeedLaterStep
+      ? `This step runs with no row cap, but a later step reads its keys — past ${LINKED_STEP_ROW_LIMIT} keys that step fails with TOO_MANY_KEYS. Click to re-arm the LIMIT.`
+      : 'This step runs with no row cap. Click to re-arm the auto LIMIT safety net.'
+  return (
+    <Tooltip title={title}>
+      <Tag
+        color={autoLimit ? 'processing' : 'warning'}
+        style={{ cursor: 'pointer', userSelect: 'none', margin: 0 }}
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggle()
+        }}
+      >
+        {autoLimit ? `Limit ${LINKED_STEP_ROW_LIMIT}` : 'No limit'}
+      </Tag>
+    </Tooltip>
+  )
+}
 
 // Collapsed-panel header: step tag, purpose, and a one-line status summary so a
 // gapped-shut step still tells the user what it produced.
@@ -273,7 +358,9 @@ function StepHeader({
   enabled: boolean
 }) {
   const stepNo = index + 1
-  const color = !enabled ? 'default' : step.error ? 'red' : stepNo === 1 ? 'blue' : 'green'
+  // Status colors, not preset palette colors: these track colorError / colorInfo
+  // / colorSuccess, so the chain stays on the app's accent in both themes.
+  const color = !enabled ? 'default' : step.error ? 'error' : stepNo === 1 ? 'processing' : 'success'
   return (
     <Space wrap size={8}>
       <Tag color={color}>Step {stepNo}</Tag>
@@ -290,7 +377,7 @@ function StepStatus({ step, enabled }: { step: StepState; enabled: boolean }) {
   else if (step.skipped) text = 'skipped — no upstream keys'
   else if (step.result)
     text =
-      `✓ ${step.result.rowCount} rows` +
+      `✓ ${step.result.rowCount} row${step.result.rowCount === 1 ? '' : 's'}` +
       (step.database ? ` · ${step.database}` : '') +
       (step.result.autoLimited ? ' · auto LIMIT' : '')
   else if (!enabled) text = 'run the previous step first'
@@ -310,7 +397,9 @@ function StepBody({
   step,
   steps,
   enabled,
+  runnable,
   connOptions,
+  onRun,
   onPatch,
   onScopeInvalidate
 }: {
@@ -318,13 +407,78 @@ function StepBody({
   step: StepState
   steps: StepState[]
   enabled: boolean
+  runnable: boolean
   connOptions: { label: string; value: string }[]
+  onRun: () => void
   onPatch: (patch: Partial<StepState>) => void
   onScopeInvalidate: () => void
 }) {
   const { token } = theme.useToken()
   const schemaInfo = useIntrospectSchema(step.connectionId, step.database)
   const stepNo = index + 1
+
+  // Live EditorView for this step, needed to format in place. Each step body
+  // owns its own ref — the steps are independent editors.
+  const editorRef = useRef<ReactCodeMirrorRef>(null)
+
+  const format = useCallback(() => {
+    const view = editorRef.current?.view
+    if (!view) return
+    if (formatSqlInView(view) === 'invalid') {
+      message.warning("Couldn't format — the SQL may be incomplete or invalid.")
+    }
+  }, [])
+
+  // Read through refs so the keymap extension stays referentially stable —
+  // SqlEditor memoises its extensions on that identity.
+  const formatRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    formatRef.current = format
+  }, [format])
+
+  // Same reason, one level up: the parent rebuilds `onPatch` on every render, and
+  // an unstable `onChange` makes react-codemirror reconfigure the editor on every
+  // keystroke. Route the live callback through a ref so `handleSqlChange` is fixed.
+  const onPatchRef = useRef(onPatch)
+  onPatchRef.current = onPatch
+  const handleSqlChange = useCallback((v: string) => onPatchRef.current({ sql: v }), [])
+
+  // Stable toolbar node, or QueryResultTable's memo never holds.
+  const resultMeta = useMemo(
+    () => (step.result ? stepMeta(step.result) : null),
+    [step.result]
+  )
+
+  // Mod-Enter runs *this* step, mirroring the query editor. Guarded by
+  // `runnable` so a keypress can't fire a step the Run button has disabled.
+  const runRef = useRef<() => void>(() => {})
+  runRef.current = () => {
+    if (runnable) onRun()
+  }
+
+  const keymapExtension = useMemo(
+    () => [
+      Prec.highest(
+        keymap.of([
+          {
+            key: 'Mod-Enter',
+            run: () => {
+              runRef.current()
+              return true
+            }
+          },
+          {
+            key: 'Shift-Alt-f',
+            run: () => {
+              formatRef.current()
+              return true
+            }
+          }
+        ])
+      )
+    ],
+    []
+  )
 
   // `:stepN.col` refs the user can insert — every column of every earlier step
   // that has already produced a result.
@@ -369,14 +523,27 @@ function StepBody({
           onPatch({ sql: buildSelectSql(schemaName, tableName) })
         }
         onInsertKeyRef={insertKeyRef}
+        onFormat={format}
+        formatDisabled={!enabled || !step.sql.trim()}
       />
-      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', width: '100%' }}>
+      {/* Definite height, not minHeight: the editor sizes itself to its content,
+          so an auto-height row grows without bound on a long statement and the
+          whole tab scrolls instead of the editor. */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 12,
+          alignItems: 'stretch',
+          width: '100%',
+          height: STEP_EDITOR_HEIGHT
+        }}
+      >
         <div
           style={{
             flex: '1 1 0',
             width: 0,
             minWidth: 0,
-            minHeight: 260,
+            minHeight: 0,
             display: 'flex',
             overflow: 'hidden',
             border: `1px solid ${token.colorBorderSecondary}`,
@@ -385,15 +552,17 @@ function StepBody({
           }}
         >
           <SqlEditor
+            ref={editorRef}
             value={step.sql}
-            onChange={(v) => onPatch({ sql: v })}
+            onChange={handleSqlChange}
             schema={schemaInfo}
             editable={enabled}
-            basicSetup={{ foldGutter: true }}
-            style={{ width: '100%', height: '100%' }}
+            basicSetup={STEP_BASIC_SETUP}
+            extraExtensions={keymapExtension}
+            style={STEP_EDITOR_STYLE}
           />
         </div>
-        <div style={{ flex: '1 1 0', width: 0, minWidth: 0, overflow: 'hidden' }}>
+        <div style={{ flex: '1 1 0', width: 0, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
           {step.skipped ? (
             <Alert
               type="info"
@@ -407,7 +576,7 @@ function StepBody({
               rows={step.result.rows}
               pageSize={PAGE_SIZE}
               maxBodyHeight={320}
-              toolbarLeft={stepMeta(step.result)}
+              toolbarLeft={resultMeta}
             />
           ) : (
             <ResultPlaceholder
@@ -436,13 +605,14 @@ function StepBody({
   )
 }
 
-// The `N rows · M ms · auto LIMIT applied` line shown above a step's result
-// grid. Rendered into QueryResultTable's toolbar slot.
+// The `N rows · M ms · auto LIMIT` line shown above a step's result grid,
+// worded and styled like the query and federated tabs' toolbar meta. Rendered
+// into QueryResultTable's toolbar slot.
 function stepMeta(result: LinkedStepRunResult): React.ReactNode {
   return (
-    <Text type="secondary" style={{ fontSize: 12 }}>
-      {result.rowCount} rows · {result.durationMs} ms
-      {result.autoLimited && ' · auto LIMIT applied'}
+    <Text type="secondary" className="tabular" style={{ fontSize: 12 }}>
+      {result.rowCount} row{result.rowCount === 1 ? '' : 's'} · {result.durationMs} ms
+      {result.autoLimited && ' · auto LIMIT'}
     </Text>
   )
 }
@@ -461,6 +631,8 @@ function StepScopePicker({
   onDatabaseChange,
   onInsertTable,
   onInsertKeyRef,
+  onFormat,
+  formatDisabled,
   disabled = false
 }: {
   connOptions: { label: string; value: string }[]
@@ -471,6 +643,8 @@ function StepScopePicker({
   onDatabaseChange: (value: string) => void
   onInsertTable: (schema: string, table: string) => void
   onInsertKeyRef: (token: string) => void
+  onFormat: () => void
+  formatDisabled: boolean
   disabled?: boolean
 }) {
   const [schema, setSchema] = useState<string | null>(null)
@@ -482,9 +656,10 @@ function StepScopePicker({
   const tables = useTables(connectionId, database, schema)
 
   return (
-    <Space wrap style={{ marginBottom: 8 }}>
+    <Space wrap size={8} style={{ marginBottom: 8 }}>
       <Select
         showSearch
+        size="small"
         optionFilterProp="label"
         placeholder="Connection"
         style={{ minWidth: 200 }}
@@ -495,6 +670,7 @@ function StepScopePicker({
       />
       <Select
         showSearch
+        size="small"
         optionFilterProp="label"
         placeholder="Database"
         style={{ minWidth: 200 }}
@@ -506,6 +682,7 @@ function StepScopePicker({
       />
       <Select
         showSearch
+        size="small"
         optionFilterProp="label"
         placeholder="Schema"
         style={{ minWidth: 160 }}
@@ -517,6 +694,7 @@ function StepScopePicker({
       />
       <Select
         showSearch
+        size="small"
         optionFilterProp="label"
         placeholder="Insert table → editor"
         style={{ minWidth: 220 }}
@@ -532,6 +710,7 @@ function StepScopePicker({
       {keyRefOptions.length > 0 && (
         <Select
           showSearch
+          size="small"
           optionFilterProp="label"
           placeholder="Insert IN (:stepN.col) → editor"
           style={{ minWidth: 220 }}
@@ -541,26 +720,20 @@ function StepScopePicker({
           onChange={(token) => token && onInsertKeyRef(token)}
         />
       )}
+      <Tooltip title="Format SQL (⇧ + Alt + F). Formats the selection if there is one.">
+        <Button
+          size="small"
+          icon={<AlignLeftOutlined />}
+          disabled={formatDisabled}
+          onClick={onFormat}
+        >
+          Format
+        </Button>
+      </Tooltip>
     </Space>
   )
 }
 
 function ResultPlaceholder({ text }: { text: string }) {
-  return (
-    <div
-      style={{
-        height: '100%',
-        minHeight: 260,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 6,
-        border: '1px dashed rgba(128,128,128,0.35)',
-        color: 'rgba(128,128,128,0.75)',
-        fontSize: 13
-      }}
-    >
-      {text}
-    </div>
-  )
+  return <div className="pg-placeholder">{text}</div>
 }

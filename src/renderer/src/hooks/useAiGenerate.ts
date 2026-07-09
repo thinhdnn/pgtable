@@ -62,7 +62,7 @@ export function useAiGenerate<TPayload>(config: UseAiGenerateConfig<TPayload>): 
         const res = await invoke<AiGenerateSqlResult | { error: string }>(channel, payload)
         if ('error' in res) {
           if (res.error === 'NO_API_KEY') {
-            cfgRef.current.setError('No Claude API key configured. Add one in Settings.')
+            cfgRef.current.setError('No AI provider configured. Add an API key in Settings.')
             cfgRef.current.onNoApiKey?.({ close: () => setOpen(false) })
           } else {
             cfgRef.current.setError(res.error)

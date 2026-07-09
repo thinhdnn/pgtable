@@ -27,7 +27,7 @@ import {
   DeleteOutlined,
   SearchOutlined
 } from '@ant-design/icons'
-import { format as formatSql } from 'sql-formatter'
+import { formatSqlInView } from '../../utils/format-sql'
 import { type ReactCodeMirrorRef } from '@uiw/react-codemirror'
 import { keymap } from '@codemirror/view'
 import { Prec } from '@codemirror/state'
@@ -38,14 +38,17 @@ import type {
   IpcResult,
   AiSuggestValuesResult,
   AiCheckSqlResult,
+  AiTroubleshootResult,
   FuzzyValueGroup,
   FuzzyValueQuery,
   SavedScript,
   SavedScriptInput
 } from '@shared/types'
 import { IPC } from '@shared/ipc-channels'
+import { isNonMutatingStatement, stripCommentsAndStrings } from '@shared/sql-statement'
 import { invoke } from '../../api'
 import { deriveSqlHint } from '../../utils/sql-hints'
+import { TroubleshootButton, TroubleshootPanel } from '../common/TroubleshootPanel'
 import { type SchemaPayload } from '../../utils/sql-completion'
 import { buildSelectSql } from '../../utils/sql-builders'
 import { useSavedQueries } from '../../hooks/useSavedQueries'
@@ -76,55 +79,6 @@ function pickFirstTable(
   return tables[0] ?? null
 }
 
-// Strip line/block comments and string literals so keyword detection can't be
-// fooled by `LIMIT` appearing inside text. We only need a sanitised copy for
-// regex checks — the actual SQL sent to the server is untouched.
-function stripCommentsAndStrings(sql: string): string {
-  let out = ''
-  let i = 0
-  while (i < sql.length) {
-    const ch = sql[i]
-    const next = sql[i + 1]
-    // Line comment
-    if (ch === '-' && next === '-') {
-      while (i < sql.length && sql[i] !== '\n') i++
-      continue
-    }
-    // Block comment
-    if (ch === '/' && next === '*') {
-      i += 2
-      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++
-      i += 2
-      continue
-    }
-    // Single-quoted string (handles doubled '' as escape)
-    if (ch === "'") {
-      i++
-      while (i < sql.length) {
-        if (sql[i] === "'" && sql[i + 1] === "'") { i += 2; continue }
-        if (sql[i] === "'") { i++; break }
-        i++
-      }
-      out += ' '
-      continue
-    }
-    // Dollar-quoted string ($tag$...$tag$)
-    if (ch === '$') {
-      const m = sql.slice(i).match(/^\$([A-Za-z_][A-Za-z0-9_]*)?\$/)
-      if (m) {
-        const tag = m[0]
-        i += tag.length
-        const end = sql.indexOf(tag, i)
-        if (end === -1) { i = sql.length } else { i = end + tag.length }
-        out += ' '
-        continue
-      }
-    }
-    out += ch
-    i++
-  }
-  return out
-}
 
 // Detects SELECT-style queries with no row cap and appends one. Returns the
 // original sql unchanged if it's a write/DDL statement, already has LIMIT, or
@@ -141,14 +95,6 @@ function applyAutoLimit(raw: string, limit: number): { sql: string; appended: bo
   return { sql: `${trimmed}\nLIMIT ${limit};`, appended: true }
 }
 
-// True when the statement is a read-only query (SELECT/WITH/TABLE/VALUES) — used
-// to decide whether AI-generated SQL needs the D6 non-SELECT warning. Reuses the
-// same comment/string stripping the auto-LIMIT logic relies on so keywords in
-// text can't fool it.
-function isReadOnlyStatement(raw: string): boolean {
-  const sanitized = stripCommentsAndStrings(raw.replace(/;\s*$/, '').trim()).trim()
-  return /^(SELECT|WITH|TABLE|VALUES)\b/i.test(sanitized)
-}
 
 // Pull `column (= | LIKE | ILIKE) 'literal'` filters out of a query so, when it
 // returns no rows, we can look up close real values for each. The captured
@@ -223,6 +169,10 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
   // AI "check SQL" state: reviews the current editor content for errors.
   const [checkLoading, setCheckLoading] = useState(false)
   const [checkResult, setCheckResult] = useState<AiCheckSqlResult | null>(null)
+  // AI "troubleshoot" state: explains the error the last run produced. Distinct
+  // from check — this one only exists once a run has actually failed.
+  const [tsLoading, setTsLoading] = useState(false)
+  const [tsResult, setTsResult] = useState<AiTroubleshootResult | null>(null)
   // "Ask AI about this row" popup target (the confirm/send flow lives in the
   // shared AskRowModal). Null row = closed.
   const [askRow, setAskRow] = useState<Record<string, unknown> | null>(null)
@@ -342,35 +292,14 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
     runRef.current = run
   }, [run])
 
-  // Pretty-print the SQL with sql-formatter (PostgreSQL dialect). Formats the
-  // selection when there is one, otherwise the whole buffer. Dispatched through
-  // the live view so undo history and cursor stay sane; onChange keeps sqlText
-  // in sync. Invalid SQL the formatter can't parse surfaces a soft message
-  // rather than throwing.
+  // Pretty-print the SQL, formatting the selection when there is one. Invalid
+  // SQL the formatter can't parse surfaces a soft message rather than throwing.
   const format = useCallback(() => {
     const view = editorRef.current?.view
     if (!view) return
-    const { from, to } = view.state.selection.main
-    const hasSelection = from !== to
-    const source = hasSelection ? view.state.sliceDoc(from, to) : view.state.doc.toString()
-    if (!source.trim()) return
-    let formatted: string
-    try {
-      formatted = formatSql(source, {
-        language: 'postgresql',
-        keywordCase: 'upper',
-        tabWidth: 2
-      })
-    } catch {
+    if (formatSqlInView(view) === 'invalid') {
       message.warning("Couldn't format — the SQL may be incomplete or invalid.")
-      return
     }
-    if (formatted === source) return
-    view.dispatch(
-      hasSelection
-        ? { changes: { from, to, insert: formatted } }
-        : { changes: { from: 0, to: view.state.doc.length, insert: formatted } }
-    )
   }, [])
 
   // Latest format handler for the keymap (Shift-Alt-F, matching editors' norm).
@@ -379,7 +308,7 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
     formatRef.current = format
   }, [format])
 
-  // Ask Claude to generate SQL from the natural-language request, scoped to the
+  // Ask the AI provider to generate SQL from the natural-language request, scoped to the
   // selected schema (D4). Modal state (open/request/loading) + the call flow come
   // from useAiGenerate; the payload, selection-aware placement, and non-SELECT
   // warning (D6) stay here. Generated SQL is placed for review, never auto-run (D1).
@@ -426,7 +355,7 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
       }
       setResult(null)
       setError(null)
-      setGenWarning(!isReadOnlyStatement(sql))
+      setGenWarning(!isNonMutatingStatement(sql))
     }
   })
 
@@ -450,7 +379,7 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
     ai.setOpen(true)
   }, [ai])
 
-  // Ask Claude to review the current editor SQL for errors, scoped to the
+  // Ask the AI provider to review the current editor SQL for errors, scoped to the
   // selected schema (D4). Reports issues and, when there are errors, offers a
   // corrected query for the user to apply — it never runs anything (D1).
   const checkSql = useCallback(async () => {
@@ -468,7 +397,7 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
       })
       if ('error' in res) {
         if (res.error === 'NO_API_KEY') {
-          setAiError('No Claude API key configured. Add one in Settings.')
+          setAiError('No AI provider configured. Add an API key in Settings.')
           setSettingsOpen(true)
         } else {
           setAiError(res.error)
@@ -487,6 +416,51 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
   const applyFix = useCallback((fixed: string) => {
     setSqlText(fixed)
     setCheckResult(null)
+    setResult(null)
+    setError(null)
+  }, [])
+
+  // Ask the AI provider why the last run failed. Sends the statement, the raw
+  // driver error, and the selected schema (D3) — never any row values. Returns a
+  // diagnosis and, only when the SQL itself is at fault, a corrected statement.
+  const troubleshoot = useCallback(async () => {
+    if (!error || tsLoading) return
+    setTsLoading(true)
+    setAiError(null)
+    setTsResult(null)
+    try {
+      const res = await invoke<AiTroubleshootResult | { error: string }>(IPC.AI_TROUBLESHOOT_SQL, {
+        kind: 'query',
+        connectionId: tab.connectionId,
+        database: tab.database,
+        schema: aiSchema,
+        sql: sqlText,
+        errorMessage: error
+      })
+      if ('error' in res) {
+        if (res.error === 'NO_API_KEY') {
+          setAiError('No AI provider configured. Add an API key in Settings.')
+          setSettingsOpen(true)
+        } else {
+          setAiError(res.error)
+        }
+        return
+      }
+      setTsResult(res)
+    } catch (err) {
+      setAiError(String(err))
+    } finally {
+      setTsLoading(false)
+    }
+  }, [error, tsLoading, sqlText, aiSchema, tab.connectionId, tab.database])
+
+  // Apply a troubleshoot fix. The statement is AI-authored, so it gets the same
+  // non-SELECT warning generated SQL gets (D6) — a "fix" can be a DELETE. It is
+  // written to the editor and nothing else: the user presses Run.
+  const applyTroubleshootFix = useCallback((fixed: string) => {
+    setSqlText(fixed)
+    setGenWarning(!isNonMutatingStatement(fixed))
+    setTsResult(null)
     setResult(null)
     setError(null)
   }, [])
@@ -621,16 +595,7 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
       ref={splitContainerRef}
       style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
     >
-      <div
-        style={{
-          padding: '6px 12px',
-          borderBottom: barBorder,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          flexShrink: 0
-        }}
-      >
+      <div className="pg-toolbar">
         <Tooltip title="Run (⌘/Ctrl + Enter). Selection runs only the selected text.">
           <Button
             type="primary"
@@ -679,7 +644,7 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
             Ask AI
           </Button>
         </Tooltip>
-        <Tooltip title="Check the SQL in the editor for errors with Claude (does not run it)">
+        <Tooltip title="Check the SQL in the editor for errors with AI (does not run it)">
           <Button
             size="small"
             icon={<BugOutlined />}
@@ -701,14 +666,14 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
           }
         >
           <Tag
-            color={autoLimit ? 'blue' : 'warning'}
+            color={autoLimit ? 'processing' : 'warning'}
             style={{ cursor: 'pointer', userSelect: 'none', margin: 0 }}
             onClick={() => setAutoLimit((v) => !v)}
           >
             {autoLimit ? `Limit ${AUTO_LIMIT}` : 'No limit'}
           </Tag>
         </Tooltip>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="pg-toolbar-meta">
           {limitNote != null && (
             <Tooltip
               title={`No LIMIT in your query — pgtable auto-appended LIMIT ${limitNote} so you don't load millions of rows. Add an explicit LIMIT to override.`}
@@ -778,10 +743,10 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
                         <Tag
                           color={
                             iss.severity === 'error'
-                              ? 'red'
+                              ? 'error'
                               : iss.severity === 'warning'
-                                ? 'orange'
-                                : 'blue'
+                                ? 'warning'
+                                : 'processing'
                           }
                           style={{ marginRight: 6 }}
                         >
@@ -983,7 +948,6 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
       </Drawer>
 
       <div
-        className="pg-sql-editor-wrap"
         style={{
           height: editorHeight,
           minHeight: 80,
@@ -1013,6 +977,7 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
           <Alert
             type="error"
             message="Query failed"
+            action={<TroubleshootButton loading={tsLoading} onClick={troubleshoot} />}
             description={
               <>
                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>
@@ -1024,6 +989,13 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
               </>
             }
             style={{ margin: 12 }}
+          />
+        )}
+        {tsResult && (
+          <TroubleshootPanel
+            result={tsResult}
+            onApply={applyTroubleshootFix}
+            onClose={() => setTsResult(null)}
           />
         )}
         {!error && result && result.rows.length > 0 && (
@@ -1077,7 +1049,7 @@ export function QueryEditor({ tab }: Props): React.ReactElement {
                         {g.suggestions.map((s) => (
                           <Tag
                             key={s.value}
-                            color="blue"
+                            color="processing"
                             style={{ cursor: 'pointer', margin: 0 }}
                             onClick={() => applySuggestion(g.raw, s.value)}
                           >

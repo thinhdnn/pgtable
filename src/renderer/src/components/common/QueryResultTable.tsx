@@ -24,7 +24,12 @@ interface Props {
 // Read-only result grid shared by the SQL editor and the linked-query steps.
 // Uses pg-grid styling so it matches the table viewer, copies a cell on click
 // (and all rows as JSON from the toolbar), and pages client-side.
-export function QueryResultTable({
+//
+// Memoised: the hosting tabs keep the SQL buffer in their own state, so every
+// keystroke re-renders them. A page of rows is thousands of cells, and without
+// this the grid rebuilt all of them on each character. Callers must pass stable
+// `toolbarLeft` / `onAskRow` identities for the memo to hold.
+export const QueryResultTable = React.memo(function QueryResultTable({
   fields,
   rows,
   toolbarLeft,
@@ -79,7 +84,7 @@ export function QueryResultTable({
           <tr key={start + ri} className="pg-row">
             {onAskRow && (
               <td style={{ width: 1, whiteSpace: 'nowrap', textAlign: 'center' }}>
-                <Tooltip title="Ask AI about this row (sends the row values to Claude)">
+                <Tooltip title="Ask AI about this row (sends the row values to your AI provider)">
                   <Button
                     size="small"
                     type="text"
@@ -99,18 +104,16 @@ export function QueryResultTable({
                 )
               }
               const str = typeof raw === 'object' ? JSON.stringify(raw) : String(raw)
+              const cell = (
+                <span className="pg-cell" style={{ cursor: 'pointer' }} onClick={() => copyCell(str)}>
+                  {str}
+                </span>
+              )
+              // Only long values get a Tooltip. antd renders the full rc-trigger
+              // even when `title` is undefined, so wrapping every cell cost one
+              // trigger per cell for nothing.
               return (
-                <td key={c}>
-                  <Tooltip title={str.length > 80 ? str : undefined}>
-                    <span
-                      className="pg-cell"
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => copyCell(str)}
-                    >
-                      {str}
-                    </span>
-                  </Tooltip>
-                </td>
+                <td key={c}>{str.length > 80 ? <Tooltip title={str}>{cell}</Tooltip> : cell}</td>
               )
             })}
           </tr>
@@ -170,4 +173,4 @@ export function QueryResultTable({
       <div style={bodyStyle}>{table}</div>
     </div>
   )
-}
+})
