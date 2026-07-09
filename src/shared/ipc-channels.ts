@@ -61,10 +61,13 @@ export const IPC = {
   // related tables automatically.
   SCHEMA_FOREIGN_KEYS: 'schema:foreign-keys',
 
-  // App settings (Claude API key) stored locally. GET returns a masked "is set"
-  // view; SET persists the raw key. The raw key never crosses to the renderer.
+  // App settings (active AI provider + per-provider key/model/base URL) stored
+  // locally. GET returns a masked "is set" view; SET persists one provider's raw
+  // key; TEST does one tiny round trip against a provider's saved config. The
+  // raw key never crosses to the renderer.
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
+  SETTINGS_TEST: 'settings:test',
 
   // Generate SQL from a natural-language request using the selected schema +
   // FK graph. Main process only (holds the API key); returns SQL text (D1).
@@ -85,6 +88,17 @@ export const IPC = {
   // there are errors, a corrected query. Never executes anything (D1).
   AI_CHECK_SQL: 'ai:check-sql',
 
+  // Explain a statement that FAILED at execution and, when the failure is a SQL
+  // authoring problem, return a corrected statement. Distinct from ai:check-sql,
+  // which reviews a query BEFORE it runs and has no error to reason about.
+  // The payload is discriminated on `kind`: 'query' carries one schema, while
+  // 'federated' carries every attachment's alias + database + schema, because
+  // DuckDB names tables as alias.schema.table and the model cannot fix a name it
+  // cannot spell. Main process only; returns { ok, summary, issues[], fixedSql? }
+  // where a missing `fixedSql` means "not fixable by rewriting the SQL" — the
+  // renderer keys the Apply button off exactly that. Never executes anything.
+  AI_TROUBLESHOOT_SQL: 'ai:troubleshoot-sql',
+
   // Free-form question about ONE selected result row. Unlike the other AI
   // features, this sends the row's actual VALUES to the provider — the renderer
   // must confirm each send (shows the exact JSON first). Returns a text answer
@@ -103,6 +117,12 @@ export const IPC = {
   // to ATTACH (READ_ONLY); tables are referenced as `alias.schema.table`. Main
   // process only (holds credentials). Read-only guarded like Linked Query.
   FEDERATED_RUN: 'federated:run',
+
+  // Stop the in-flight federated run identified by `runId` (minted by the
+  // renderer on each Run press). Answers `{ cancelled: false }` when the run has
+  // already ended — a cancel that lost the race, not a failure. The run's own
+  // FEDERATED_RUN promise resolves separately with `{ cancelled: true }`.
+  FEDERATED_CANCEL: 'federated:cancel',
 
   // Saved SQL scripts — an in-app library of named queries persisted locally via
   // electron-store (see history/save-sql-script/CONTEXT.md). LIST returns full

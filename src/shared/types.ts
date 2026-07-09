@@ -228,6 +228,13 @@ export interface AiGenerateSqlResult {
 export interface AiGenerateFederatedSqlPayload {
   attachments: FederatedAttachment[]
   request: string
+  /**
+   * Existing SQL to refine, exactly as on {@link AiGenerateSqlPayload}. When
+   * present the request is a follow-up instruction to modify this query — the
+   * user selected SQL in the federated editor and asked for a change — rather
+   * than a from-scratch generation. Omit for a fresh query.
+   */
+  baseSql?: string
 }
 
 // Request/response for asking a free-form question about ONE result row. Unlike
@@ -282,6 +289,49 @@ export interface AiCheckSqlResult {
   summary: string
   issues: AiCheckSqlIssue[]
   /** Corrected, runnable query — present only when there were errors to fix. */
+  fixedSql?: string
+}
+
+// Troubleshoot: unlike a check, the statement already ran and FAILED. The driver
+// error is the most informative thing we have, so it is required, not optional.
+
+/** A failed run in the ad-hoc query editor: one connection, one schema. */
+export interface AiTroubleshootQueryPayload {
+  kind: 'query'
+  connectionId: string
+  database: string
+  schema: string
+  /** The statement as executed, verbatim. */
+  sql: string
+  /** The raw driver error, including any LINE/HINT continuation lines. */
+  errorMessage: string
+}
+
+/** A failed federated run. Every attachment's alias AND database reach the model:
+ *  the SQL names tables as `alias.schema.table`, so an alias the model cannot see
+ *  is an alias it cannot correct. */
+export interface AiTroubleshootFederatedPayload {
+  kind: 'federated'
+  attachments: FederatedAttachment[]
+  sql: string
+  errorMessage: string
+}
+
+/** Discriminated on `kind`. The linked-query surface lands in a later story. */
+export type AiTroubleshootPayload =
+  | AiTroubleshootQueryPayload
+  | AiTroubleshootFederatedPayload
+
+export interface AiTroubleshootResult {
+  /** True when the model found nothing to fix. Rare here — the statement did
+   *  fail — but reachable when the cause is environmental. */
+  ok: boolean
+  /** One-line diagnosis. Always present. */
+  summary: string
+  issues: AiCheckSqlIssue[]
+  /** Corrected, runnable statement. ABSENT when the failure is not a SQL
+   *  authoring problem (connection lost, timeout, permissions). The renderer
+   *  shows the Apply button if and only if this is present. */
   fixedSql?: string
 }
 
@@ -363,6 +413,12 @@ export interface LinkedStepRunPayload {
   stepIndex: number
   /** Result sets of already-run earlier steps, keyed by 1-based step number. */
   upstream: LinkedUpstreamResults
+  /** When true, a bare SELECT gets `LIMIT LINKED_STEP_ROW_LIMIT` appended. The
+   * UI defaults this on per step; a payload that omits it gets the safety net.
+   * Turning it off does not lift `MAX_KEY_VALUES`: a keyset a later step's
+   * placeholder consumes is still bounded, and over the bound that later step
+   * fails with TOO_MANY_KEYS rather than running on truncated keys. */
+  autoLimit: boolean
 }
 
 export interface LinkedStepRunResult {
@@ -398,16 +454,34 @@ export interface FederatedAttachment {
 export interface FederatedRunPayload {
   attachments: FederatedAttachment[]
   sql: string
-  /** When true (default), a bare SELECT gets a safety LIMIT appended. Set false
-   * to run with no row cap. */
+  /** When true, a bare SELECT gets a safety LIMIT appended. The tab defaults
+   * this off — a federated run is deliberate, so it returns every row unless
+   * the user arms the net from the toolbar. A payload that omits the field
+   * still gets the net (see federated-handlers). */
   autoLimit: boolean
+  /** Identifies this run so `federated:cancel` can stop it. The renderer mints a
+   * fresh one per Run press. A payload that omits it still runs; it just cannot
+   * be cancelled (see federated-handlers). */
+  runId: string
 }
 
 /** Federated run result. Same shape as a Linked step result so the renderer can
  * reuse QueryResultTable and the auto-LIMIT badge. Failures use `{ error }`. */
 export type FederatedRunResult = LinkedStepRunResult
 
-export type FederatedRunOutcome = FederatedRunResult | { error: string }
+/** A run ends one of three ways. `{ cancelled: true }` is deliberately not an
+ * `{ error }`: the user asked for the abort, so the tab reports it as a notice
+ * rather than a failed query. Narrow on `cancelled` before `error`. */
+export type FederatedRunOutcome = FederatedRunResult | { error: string } | { cancelled: true }
+
+export interface FederatedCancelPayload {
+  runId: string
+}
+
+/** `cancelled: false` means the run had already ended — nothing was stopped. */
+export interface FederatedCancelOutcome {
+  cancelled: boolean
+}
 
 // Saved SQL script — an in-app library of named queries (see
 // history/save-sql-script/CONTEXT.md). The list is global (D2): every script is
@@ -454,8 +528,8 @@ export interface SavedFederatedQuery {
   name: string
   attachments: SavedFederatedAttachment[]
   sql: string
-  /** Mirrors the tab's autoLimit toggle: when true (default) a bare SELECT gets
-   * a safety LIMIT on Run. Restored on Open. */
+  /** Mirrors the tab's autoLimit toggle (which defaults off): when true a bare
+   * SELECT gets a safety LIMIT on Run. Restored on Open. */
   autoLimit: boolean
   created_at: string
   updated_at: string
